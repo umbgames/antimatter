@@ -17,32 +17,75 @@ namespace Antimatter
             MountainValley,
             Island
         }
-        
+
         public struct TerrainParams
         {
-            public int heightmapResolution; // e.g. 513
-            public int sizeXZ;              // terrain width/length in meters
-            public int heightY;             // max height in meters
+            public int heightmapResolution;
+            public int sizeXZ;
+            public int heightY;
             public int seed;
 
-            // Noise
             public int octaves;
             public float lacunarity;
             public float persistence;
             public float baseFrequency;
 
-            // Shaping
-            public float ridgeStrength;     // 0..1
-            public float erosionPasses;     // 0..50 (cheap smoothing passes)
-            public float seaLevel;          // 0..1 (normalized)
-            public float valleyWidth;       // 0..1
-            public float valleyDepth;       // 0..1
+            public float ridgeStrength;
+            public float erosionPasses;
+            public float seaLevel;
+            public float valleyWidth;
+            public float valleyDepth;
         }
 
+        // ── Original preset-based entry (backward compatible) ──
         public static GameObject CreateOrReplaceTerrain(string name, TerrainPreset preset, int seed, Vector3 position)
         {
+            var p = DefaultParams(preset, seed);
+            return CreateOrReplaceTerrainInternal(name, preset, p, position);
+        }
+
+        // ── NEW: AI-controlled entry accepting full params from the schema ──
+        public static GameObject CreateOrReplaceTerrain(string name, SchemaTerrainParams schema, string presetHint, Vector3 position)
+        {
+            TerrainPreset preset = GuessPresetFromPrompt(presetHint ?? "Hills");
+            var defaults = DefaultParams(preset, schema?.seed ?? 0);
+            var p = MergeSchemaIntoParams(schema, defaults);
+            return CreateOrReplaceTerrainInternal(name, preset, p, position);
+        }
+
+        /// <summary>
+        /// Merges AI-provided SchemaTerrainParams over preset defaults.
+        /// Any field with value 0 in the schema falls back to the preset default.
+        /// </summary>
+        public static TerrainParams MergeSchemaIntoParams(SchemaTerrainParams s, TerrainParams defaults)
+        {
+            if (s == null) return defaults;
+
+            var p = defaults;
+
+            if (s.heightmapResolution > 0) p.heightmapResolution = s.heightmapResolution;
+            if (s.sizeXZ > 0)              p.sizeXZ = s.sizeXZ;
+            if (s.heightY > 0)             p.heightY = s.heightY;
+            if (s.seed != 0)               p.seed = s.seed;
+
+            if (s.octaves > 0)             p.octaves = s.octaves;
+            if (s.lacunarity > 0f)         p.lacunarity = s.lacunarity;
+            if (s.persistence > 0f)        p.persistence = s.persistence;
+            if (s.baseFrequency > 0f)      p.baseFrequency = s.baseFrequency;
+
+            if (s.ridgeStrength > 0f)      p.ridgeStrength = s.ridgeStrength;
+            if (s.erosionPasses > 0f)      p.erosionPasses = s.erosionPasses;
+            if (s.seaLevel > 0f)           p.seaLevel = s.seaLevel;
+            if (s.valleyWidth > 0f)        p.valleyWidth = s.valleyWidth;
+            if (s.valleyDepth > 0f)        p.valleyDepth = s.valleyDepth;
+
+            return p;
+        }
+
+        // ── Core implementation ──
+        private static GameObject CreateOrReplaceTerrainInternal(string name, TerrainPreset preset, TerrainParams p, Vector3 position)
+        {
 #if UNITY_EDITOR
-            // Remove old terrain with same name (optional)
             var old = GameObject.Find(name);
             if (old != null)
             {
@@ -60,8 +103,6 @@ namespace Antimatter
             var terrain = go.AddComponent<Terrain>();
             var collider = go.AddComponent<TerrainCollider>();
 
-            var p = DefaultParams(preset, seed);
-
             var data = new TerrainData();
             data.heightmapResolution = p.heightmapResolution;
             data.size = new Vector3(p.sizeXZ, p.heightY, p.sizeXZ);
@@ -70,14 +111,12 @@ namespace Antimatter
             data.SetHeights(0, 0, heights);
 
 #if UNITY_EDITOR
-            // Save TerrainData as a project asset so Unity can render it
             string folder = "Assets/GeneratedTerrainData";
             if (!AssetDatabase.IsValidFolder(folder))
             {
                 AssetDatabase.CreateFolder("Assets", "GeneratedTerrainData");
             }
             string assetPath = $"{folder}/{name}_Data.asset";
-            // Remove old asset at same path if it exists
             var existing = AssetDatabase.LoadAssetAtPath<TerrainData>(assetPath);
             if (existing != null)
             {
@@ -92,28 +131,23 @@ namespace Antimatter
 
             go.transform.position = position;
 
-            // Basic terrain settings
             terrain.drawInstanced = true;
             terrain.heightmapPixelError = 5;
 
 #if UNITY_EDITOR
-            // Assign default terrain material for the current render pipeline
             var rpAsset = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline;
             if (rpAsset != null)
             {
-                // URP/HDRP: use the pipeline's default terrain material
                 terrain.materialTemplate = rpAsset.defaultTerrainMaterial;
             }
             else
             {
-                // Built-in RP: use the built-in terrain standard material
                 terrain.materialTemplate = AssetDatabase.GetBuiltinExtraResource<Material>("Default-Terrain-Standard.mat");
             }
 
-            // Create a default terrain layer so the terrain has something visible to render
             var defaultLayer = new TerrainLayer();
             var defaultTex = new Texture2D(4, 4, TextureFormat.RGBA32, false);
-            var greenColor = new Color(0.36f, 0.55f, 0.28f, 1f); // natural grass green
+            var greenColor = new Color(0.36f, 0.55f, 0.28f, 1f);
             var pixels = new Color[16];
             for (int i = 0; i < 16; i++) pixels[i] = greenColor;
             defaultTex.SetPixels(pixels);
@@ -133,7 +167,6 @@ namespace Antimatter
             AssetDatabase.CreateAsset(defaultLayer, layerPath);
             data.terrainLayers = new TerrainLayer[] { defaultLayer };
 
-            // Force refresh
             terrain.Flush();
             EditorUtility.SetDirty(data);
             EditorUtility.SetDirty(terrain);
@@ -161,7 +194,7 @@ namespace Antimatter
             return TerrainPreset.Hills;
         }
 
-        private static TerrainParams DefaultParams(TerrainPreset preset, int seed)
+        public static TerrainParams DefaultParams(TerrainPreset preset, int seed)
         {
             var p = new TerrainParams
             {
@@ -237,7 +270,6 @@ namespace Antimatter
             int res = p.heightmapResolution;
             float[,] h = new float[res, res];
 
-            // Deterministic offsets from seed
             float ox = Hash01(p.seed, 11) * 10000f;
             float oz = Hash01(p.seed, 23) * 10000f;
 
@@ -249,12 +281,9 @@ namespace Antimatter
                     float nz = (z / (float)(res - 1) - 0.5f);
 
                     float baseH = FractalNoise(nx, nz, ox, oz, p);
-
-                    // Ridge noise for mountains
                     float ridged = RidgedNoise(nx, nz, ox + 1000f, oz + 2000f, p);
                     float height = Mathf.Lerp(baseH, Mathf.Max(baseH, ridged), p.ridgeStrength);
 
-                    // Preset shaping
                     if (preset == TerrainPreset.Island)
                         height = ApplyIslandFalloff(height, nx, nz, p);
 
@@ -265,12 +294,10 @@ namespace Antimatter
                 }
             }
 
-            // Cheap “erosion”: repeated smoothing (fast, decent)
             int passes = Mathf.Clamp(Mathf.RoundToInt(p.erosionPasses), 0, 50);
             for (int i = 0; i < passes; i++)
                 SmoothInPlace(h);
 
-            // Clamp to [0..1]
             for (int z = 0; z < res; z++)
                 for (int x = 0; x < res; x++)
                     h[z, x] = Mathf.Clamp01(h[z, x]);
@@ -295,15 +322,12 @@ namespace Antimatter
             }
 
             float h = sum / Mathf.Max(0.0001f, norm);
-
-            // Recenter and compress a bit so plains stay calmer
             h = Mathf.Pow(h, 1.25f);
             return h;
         }
 
         private static float RidgedNoise(float nx, float nz, float ox, float oz, TerrainParams p)
         {
-            // Ridged: 1 - abs(2n-1)
             float n = FractalNoise(nx, nz, ox, oz, p);
             float r = 1f - Mathf.Abs(2f * n - 1f);
             r = Mathf.Pow(r, 2.2f);
@@ -312,26 +336,20 @@ namespace Antimatter
 
         private static float ApplyIslandFalloff(float height, float nx, float nz, TerrainParams p)
         {
-            float r = Mathf.Sqrt(nx * nx + nz * nz); // 0..~0.7
+            float r = Mathf.Sqrt(nx * nx + nz * nz);
             float falloff = Mathf.SmoothStep(1f, 0f, Mathf.Clamp01(r / 0.55f));
             float sea = p.seaLevel;
-
             float island = height * falloff;
-            island = Mathf.Max(island, sea * 0.85f); // keep shallow sea floor
+            island = Mathf.Max(island, sea * 0.85f);
             return island;
         }
 
         private static float CarveValley(float height, float nx, float nz, TerrainParams p)
         {
-            // Carve a valley along a diagonal “river” axis for determinism.
-            // Distance to line y=x in normalized coords:
             float d = Mathf.Abs(nz - nx) / Mathf.Sqrt(2f);
-
             float width = Mathf.Clamp01(p.valleyWidth);
-            float t = Mathf.SmoothStep(width, 0f, d);  // 1 near centerline
+            float t = Mathf.SmoothStep(width, 0f, d);
             float depth = p.valleyDepth;
-
-            // Lower terrain near valley centerline
             float carved = height - (t * depth);
             return carved;
         }
@@ -341,7 +359,6 @@ namespace Antimatter
             int res0 = h.GetLength(0);
             int res1 = h.GetLength(1);
 
-            // One pass of 5-tap average (center + 4 neighbors)
             for (int z = 1; z < res0 - 1; z++)
             {
                 for (int x = 1; x < res1 - 1; x++)

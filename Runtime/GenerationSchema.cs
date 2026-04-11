@@ -12,39 +12,158 @@ namespace Antimatter
         public string planExplanation;
         public string planSuggestions;
 
-        // NEW: global settings
         public GenerationSettings settings;
 
         public List<SceneDefinition> scenes;
         public List<ScriptDefinition> scripts;
         public FlowDefinition flow;
 
-        // NEW: asset definitions (materials, terrain data, etc.)
         public AssetPlan assets;
     }
 
     [Serializable]
     public class GenerationSettings
     {
-        // If true, executor injects missing camera/light per scene,
-        // unless scene explicitly disables it.
         public bool ensureCameraAndLight = true;
-
-        // NEW: AI-controlled world generation flags (terrain/roads/settlements).
         public WorldGenSettings worldGen;
     }
+
+    // ───────────────────── WORLD GEN (AI-CONTROLLED) ─────────────────────
 
     [Serializable]
     public class WorldGenSettings
     {
         public bool enabled = false;
 
-        // Schema enum strings: "Plains","Hills","Mountains","Valley","Canyon","Plateau","Island"
+        // ── Terrain ──
         public string terrainPreset = "Hills";
+        public SchemaTerrainParams terrain;
 
-        // AI-Dictated parameters replacing boolean flags
+        // ── Roads ──
         public List<Vector3> roadHubs;
+        public SchemaRoadSettings roads;
+
+        // ── Settlements ──
         public List<SettlementNode> settlements;
+        public SchemaSettlementDefaults settlementDefaults;
+    }
+
+    /// <summary>
+    /// Full terrain generation parameters exposed to the AI.
+    /// When null/zeroed the system falls back to preset defaults.
+    /// </summary>
+    [Serializable]
+    public class SchemaTerrainParams
+    {
+        public int heightmapResolution;     // e.g. 513, 257
+        public int sizeXZ;                  // terrain width/length in metres
+        public int heightY;                 // max height in metres
+        public int seed;
+
+        // Noise
+        public int octaves;
+        public float lacunarity;
+        public float persistence;
+        public float baseFrequency;
+
+        // Shaping
+        public float ridgeStrength;         // 0..1
+        public float erosionPasses;         // 0..50
+        public float seaLevel;              // 0..1
+        public float valleyWidth;           // 0..1
+        public float valleyDepth;           // 0..1
+    }
+
+    /// <summary>
+    /// Full road generation parameters exposed to the AI.
+    /// When null the system uses sensible defaults.
+    /// </summary>
+    [Serializable]
+    public class SchemaRoadSettings
+    {
+        public int seed;
+
+        // Grid / Network
+        public int gridResolution;          // 64..1024
+        public int hubCount;                // 4..64
+        public int extraConnections;        // 0..32
+        public float hubMinSpacingWorld;    // 10..500
+
+        // Surface constraints
+        public float maxSurfaceSlopeDeg;    // 1..30
+        public float hardBlockSlopeDeg;     // 1..45
+        public float maxRoadGrade;          // 0.01..0.25
+
+        // Cost weights
+        public float heightPenalty;
+        public float slopePenalty;
+        public float valleyBonus;
+        public float turnPenalty;
+
+        // Geometry
+        public float roadHalfWidth;         // 1..20
+        public float roadYOffset;           // 0..1
+
+        // Terrain stamping
+        public float stampFalloff;
+        public float stampBlend;
+        public float stampCutDepth;
+
+        // Smoothing
+        public float simplifyToleranceWorld;
+        public int chaikinIterations;
+
+        // Tunnel
+        public float tunnelTriggerCoverMeters;
+        public float tunnelInnerRadius;
+        public float tunnelWallThickness;
+        public float tunnelPortalLength;
+
+        // Bridge
+        public float bridgeTriggerDropMeters;
+        public float minBridgeLength;
+        public float bridgeDeckClearance;
+        public float bridgeDeckThickness;
+        public float bridgePillarSpacing;
+        public float bridgePillarWidth;
+        public float bridgeRailHeight;
+        public float bridgeRailThickness;
+        public bool bridgeEnableTruss;
+        public float bridgeTrussHeight;
+        public float bridgeTrussThickness;
+        public float bridgeTrussPostSpacing;
+    }
+
+    /// <summary>
+    /// Global settlement defaults exposed to the AI.
+    /// Individual SettlementNode entries can override these.
+    /// </summary>
+    [Serializable]
+    public class SchemaSettlementDefaults
+    {
+        public int seed;
+        public string style;                // Auto, ModernCityBlocks, MedievalTown, Suburban
+        public int maxSettlements;
+
+        // Lot / building sizing
+        public float lotMinSize;
+        public float lotMaxSize;
+        public float buildingHeightMin;
+        public float buildingHeightMax;
+        public int buildingsPerTown;
+        public int buildingsPerVillage;
+
+        // Terrain filters
+        public float maxSlopeDeg;
+        public float roadClearance;
+
+        // Pad stamping
+        public float padRadius;
+        public float padFalloff;
+        public float padBlend;
+
+        // Settlement radius
+        public float settlementRadius;
     }
 
     [Serializable]
@@ -53,8 +172,18 @@ namespace Antimatter
         public Vector3 center;
         public float radius;
         public int buildingCount;
-        public string style; // Auto, ModernCityBlocks, MedievalTown, Suburban
+        public string style;                // Auto, ModernCityBlocks, MedievalTown, Suburban
+
+        // Per-settlement overrides (0 = use global default)
+        public float lotMinSize;
+        public float lotMaxSize;
+        public float buildingHeightMin;
+        public float buildingHeightMax;
+        public float roadClearance;
+        public float padRadius;
     }
+
+    // ───────────────────── ASSETS ─────────────────────
 
     [Serializable]
     public class AssetPlan
@@ -68,15 +197,12 @@ namespace Antimatter
     {
         public string name;
         public List<ObjectDefinition> objects;
-
-        // NEW: per-scene override
         public SceneSettings settings;
     }
 
     [Serializable]
     public class SceneSettings
     {
-        // If null, inherit from global ensureCameraAndLight.
         public bool? ensureCameraAndLight;
     }
 
@@ -84,58 +210,37 @@ namespace Antimatter
     public class ObjectDefinition
     {
         public string id;
-
-        // NEW: broader object kinds
-        // "Primitive" | "Empty" | "Builtin" | "Terrain"
-        public string kind;
-
-        // If kind == Primitive: "Cube" | "Sphere" | "Capsule" | "Plane" | "Cylinder" | "Quad"
+        public string kind;                // "Primitive" | "Empty" | "Builtin" | "Terrain"
         public string primitiveType;
-
-        // If kind == Builtin: "Camera" | "DirectionalLight" | "PointLight" | "SpotLight"
         public string builtinType;
-
-        // If kind == Terrain: reference terrainData id
         public string terrainDataId;
-
-        // Hierarchy support (optional)
         public string parentId;
 
         public Vector3 position;
         public Vector3 rotationEuler;
         public Vector3 scale;
 
-        // Components: still for MonoBehaviours, plus basic built-in components via a whitelist mechanism
         public List<ComponentDefinition> components;
-
-        // NEW: renderer/material link (optional)
         public string materialId;
     }
 
     [Serializable]
     public class ComponentDefinition
     {
-        // Either:
-        // - script = MonoBehaviour class name (preferred)
-        // or
-        // - builtinComponent = whitelisted built-in component name ("Rigidbody", "BoxCollider", "SphereCollider", "CapsuleCollider")
         public string script;
         public string builtinComponent;
-
         public List<PropertyValue> properties;
     }
 
     [Serializable]
     public class PropertyValue
     {
-        public string name;                 // field/property
+        public string name;
         public string type;                 // "float"|"int"|"bool"|"string"|"color"|"vector3"
         public float floatValue;
         public int intValue;
         public bool boolValue;
         public string stringValue;
-
-        // NEW
         public Color colorValue;
         public Vector3 vector3Value;
     }
@@ -144,23 +249,23 @@ namespace Antimatter
     public class ScriptDefinition
     {
         public string name;
-        public string path;                 // Must be under Assets/
-        public string code;                 // C# content
+        public string path;
+        public string code;
     }
 
     [Serializable]
     public class FlowDefinition
     {
-        public string restartKey;           // e.g. "R"
+        public string restartKey;
         public bool nextSceneOnTrigger;
     }
 
     [Serializable]
     public class MaterialDefinition
     {
-        public string id;           // stable reference id, e.g. "Mat_Player"
-        public string shader;       // e.g. "Standard" or "Universal Render Pipeline/Lit" (executor will try)
-        public Color color;         // base color
+        public string id;
+        public string shader;
+        public Color color;
         public float metallic;
         public float smoothness;
     }
@@ -168,9 +273,12 @@ namespace Antimatter
     [Serializable]
     public class TerrainDataDefinition
     {
-        public string id;                   // stable reference id, e.g. "Terrain_Main"
-        public Vector3 size;                // terrain size
-        public int heightmapResolution;     // e.g. 513
-        public string preset;              // optional: matches schema enum
+        public string id;
+        public Vector3 size;
+        public int heightmapResolution;
+        public string preset;
+
+        // Full terrain params (optional — overrides preset)
+        public SchemaTerrainParams terrainParams;
     }
 }
