@@ -447,7 +447,7 @@ namespace Antimatter
             {
                 if (doRoads)
                 {
-                    var roadSettings = BuildRoadGenSettingsFromPrompt(userPrompt);
+                    var roadSettings = BuildRoadGenSettings(userPrompt, wg);
                     Material roadMat = null;
                     RoadNetworkPlanner.GenerateRoadSystem(scene, terrain, roadSettings, wg.roadHubs, roadMat, alsoCreateTunnelRoadbed: false);
                     roadsResult = RoadNetworkPlanner.LastResult;
@@ -458,7 +458,7 @@ namespace Antimatter
                     // Settlements should generally require real terrain; if temp, skip.
                     if (!createdTempTerrain)
                     {
-                        TryGenerateSettlements(scene, terrain, roadsResult, wg.settlements, userPrompt);
+                        TryGenerateSettlements(scene, terrain, roadsResult, wg.settlements, userPrompt, wg);
                     }
                 }
             }
@@ -512,11 +512,12 @@ namespace Antimatter
             Terrain terrain,
             RoadNetworkPlanner.RoadNetworkResult roadsResult,
             List<SettlementNode> aiSettlements,
-            string userPrompt)
+            string userPrompt,
+            WorldGenSettings wg)
         {
             if (roadsResult == null) return;
     
-            var setSettings = BuildSettlementGenSettingsFromPrompt(userPrompt);
+            var setSettings = BuildSettlementGenSettings(userPrompt, wg);
     
             Material buildingMat = null;
             Material wallMat = null;
@@ -534,11 +535,12 @@ namespace Antimatter
             Debug.Log("AI Game Generator: Settlements generated.");
         }
     
-        private static SettlementGenSettings BuildSettlementGenSettingsFromPrompt(string userPrompt)
+        private static SettlementGenSettings BuildSettlementGenSettings(string userPrompt, WorldGenSettings wg)
         {
             int seed = StablePromptSeed(userPrompt);
             string p = (userPrompt ?? "").ToLowerInvariant();
-    
+
+            // Start with sensible defaults
             var s = new SettlementGenSettings
             {
                 seed = seed,
@@ -578,80 +580,80 @@ namespace Antimatter
                 suburbanCulDeSacRadius = 30f,
                 suburbanYardPadding = 3.0f
             };
-    
-            if (p.Contains("medieval") || p.Contains("castle") || p.Contains("walled") || p.Contains("market"))
-                s.style = SettlementStyle.MedievalTown;
-            else if (p.Contains("suburb") || p.Contains("cul-de-sac") || p.Contains("neighborhood"))
-                s.style = SettlementStyle.Suburban;
-            else if (p.Contains("modern") || p.Contains("downtown") || p.Contains("grid") || p.Contains("highrise"))
-                s.style = SettlementStyle.ModernCityBlocks;
-    
-            if (p.Contains("sparse") || p.Contains("few buildings"))
+
+            // ── Override from AI plan data if present ──
+            var sd = wg?.settlementDefaults;
+            if (sd != null)
             {
-                s.buildingsPerTown = Mathf.Max(12, s.buildingsPerTown / 2);
-                s.buildingsPerVillage = Mathf.Max(6, s.buildingsPerVillage / 2);
-                s.maxSettlements = Mathf.Max(2, s.maxSettlements / 2);
+                if (sd.seed != 0)              s.seed = sd.seed;
+                if (sd.maxSettlements > 0)     s.maxSettlements = sd.maxSettlements;
+                if (sd.lotMinSize > 0f)        s.lotMinSize = sd.lotMinSize;
+                if (sd.lotMaxSize > 0f)        s.lotMaxSize = sd.lotMaxSize;
+                if (sd.buildingHeightMin > 0f) s.buildingHeightMin = sd.buildingHeightMin;
+                if (sd.buildingHeightMax > 0f) s.buildingHeightMax = sd.buildingHeightMax;
+                if (sd.buildingsPerTown > 0)   s.buildingsPerTown = sd.buildingsPerTown;
+                if (sd.buildingsPerVillage > 0) s.buildingsPerVillage = sd.buildingsPerVillage;
+                if (sd.maxSlopeDeg > 0f)       s.maxSlopeDeg = sd.maxSlopeDeg;
+                if (sd.roadClearance > 0f)     s.roadClearance = sd.roadClearance;
+                if (sd.padRadius > 0f)         s.padRadius = sd.padRadius;
+                if (sd.padFalloff > 0f)        s.padFalloff = sd.padFalloff;
+                if (sd.padBlend > 0f)          s.padBlend = sd.padBlend;
+                if (sd.settlementRadius > 0f)  s.settlementRadius = sd.settlementRadius;
+
+                if (!string.IsNullOrEmpty(sd.style) && Enum.TryParse(sd.style, true, out SettlementStyle parsed))
+                    s.style = parsed;
             }
-    
-            if (p.Contains("dense") || p.Contains("many buildings"))
+
+            // ── Prompt fallback only if plan didn't specify style ──
+            if (s.style == SettlementStyle.Auto)
             {
-                s.buildingsPerTown = Mathf.Min(250, Mathf.RoundToInt(s.buildingsPerTown * 1.5f));
-                s.buildingsPerVillage = Mathf.Min(120, Mathf.RoundToInt(s.buildingsPerVillage * 1.35f));
+                if (p.Contains("medieval") || p.Contains("castle") || p.Contains("walled") || p.Contains("market"))
+                    s.style = SettlementStyle.MedievalTown;
+                else if (p.Contains("suburb") || p.Contains("cul-de-sac") || p.Contains("neighborhood"))
+                    s.style = SettlementStyle.Suburban;
+                else if (p.Contains("modern") || p.Contains("downtown") || p.Contains("grid") || p.Contains("highrise"))
+                    s.style = SettlementStyle.ModernCityBlocks;
             }
-    
-            if (p.Contains("one town") || p.Contains("single town"))
-            {
-                s.maxSettlements = 1;
-                s.enableRoadsideVillages = false;
-            }
-    
+
             return s;
         }
     
-        private static RoadGenSettings BuildRoadGenSettingsFromPrompt(string userPrompt)
+        private static RoadGenSettings BuildRoadGenSettings(string userPrompt, WorldGenSettings wg)
         {
             int seed = StablePromptSeed(userPrompt);
             string p = (userPrompt ?? "").ToLowerInvariant();
-    
+
             bool wantsTunnels =
                 p.Contains("tunnel") || p.Contains("tunnels") || p.Contains("through the mountain") || p.Contains("cut through");
-    
+
             bool wantsBridges =
                 p.Contains("bridge") || p.Contains("bridges") || p.Contains("ravine") || p.Contains("gorge") || p.Contains("cliff");
-    
+
             var s = new RoadGenSettings
             {
                 seed = seed,
                 gridResolution = 256,
-    
                 hubCount = 18,
                 extraConnections = 6,
                 hubMinSpacingWorld = 90f,
-    
                 maxSurfaceSlopeDeg = 12f,
                 hardBlockSlopeDeg = 18f,
                 maxRoadGrade = 0.10f,
-    
                 heightPenalty = 4f,
                 slopePenalty = 16f,
                 valleyBonus = 2.5f,
                 turnPenalty = 1.2f,
-    
                 roadHalfWidth = 3.5f,
                 roadYOffset = 0.02f,
-    
                 stampFalloff = 4f,
                 stampBlend = 2f,
                 stampCutDepth = 0.8f,
-    
                 simplifyToleranceWorld = 2.0f,
                 chaikinIterations = 2,
-    
                 tunnelTriggerCoverMeters = wantsTunnels ? 8f : 9999f,
                 tunnelInnerRadius = 6f,
                 tunnelWallThickness = 1.5f,
                 tunnelPortalLength = 6f,
-    
                 bridgeTriggerDropMeters = wantsBridges ? 6f : 9999f,
                 minBridgeLength = 28f,
                 bridgeDeckClearance = 0.25f,
@@ -669,13 +671,55 @@ namespace Antimatter
                 bridgeTrussThickness = 0.25f,
                 bridgeTrussPostSpacing = 3.0f
             };
-    
+
+            // ── Override from AI plan data if present ──
+            var rd = wg?.roads;
+            if (rd != null)
+            {
+                if (rd.seed != 0)                       s.seed = rd.seed;
+                if (rd.gridResolution > 0)              s.gridResolution = rd.gridResolution;
+                if (rd.hubCount > 0)                    s.hubCount = rd.hubCount;
+                if (rd.extraConnections > 0)            s.extraConnections = rd.extraConnections;
+                if (rd.hubMinSpacingWorld > 0f)         s.hubMinSpacingWorld = rd.hubMinSpacingWorld;
+                if (rd.maxSurfaceSlopeDeg > 0f)         s.maxSurfaceSlopeDeg = rd.maxSurfaceSlopeDeg;
+                if (rd.hardBlockSlopeDeg > 0f)          s.hardBlockSlopeDeg = rd.hardBlockSlopeDeg;
+                if (rd.maxRoadGrade > 0f)               s.maxRoadGrade = rd.maxRoadGrade;
+                if (rd.heightPenalty > 0f)              s.heightPenalty = rd.heightPenalty;
+                if (rd.slopePenalty > 0f)               s.slopePenalty = rd.slopePenalty;
+                if (rd.valleyBonus > 0f)                s.valleyBonus = rd.valleyBonus;
+                if (rd.turnPenalty > 0f)                s.turnPenalty = rd.turnPenalty;
+                if (rd.roadHalfWidth > 0f)             s.roadHalfWidth = rd.roadHalfWidth;
+                if (rd.roadYOffset > 0f)               s.roadYOffset = rd.roadYOffset;
+                if (rd.stampFalloff > 0f)              s.stampFalloff = rd.stampFalloff;
+                if (rd.stampBlend > 0f)                s.stampBlend = rd.stampBlend;
+                if (rd.stampCutDepth > 0f)             s.stampCutDepth = rd.stampCutDepth;
+                if (rd.simplifyToleranceWorld > 0f)    s.simplifyToleranceWorld = rd.simplifyToleranceWorld;
+                if (rd.chaikinIterations > 0)          s.chaikinIterations = rd.chaikinIterations;
+                if (rd.tunnelTriggerCoverMeters > 0f)  s.tunnelTriggerCoverMeters = rd.tunnelTriggerCoverMeters;
+                if (rd.tunnelInnerRadius > 0f)         s.tunnelInnerRadius = rd.tunnelInnerRadius;
+                if (rd.tunnelWallThickness > 0f)       s.tunnelWallThickness = rd.tunnelWallThickness;
+                if (rd.tunnelPortalLength > 0f)        s.tunnelPortalLength = rd.tunnelPortalLength;
+                if (rd.bridgeTriggerDropMeters > 0f)   s.bridgeTriggerDropMeters = rd.bridgeTriggerDropMeters;
+                if (rd.minBridgeLength > 0f)           s.minBridgeLength = rd.minBridgeLength;
+                if (rd.bridgeDeckClearance > 0f)       s.bridgeDeckClearance = rd.bridgeDeckClearance;
+                if (rd.bridgeDeckThickness > 0f)       s.bridgeDeckThickness = rd.bridgeDeckThickness;
+                if (rd.bridgePillarSpacing > 0f)       s.bridgePillarSpacing = rd.bridgePillarSpacing;
+                if (rd.bridgePillarWidth > 0f)         s.bridgePillarWidth = rd.bridgePillarWidth;
+                if (rd.bridgeRailHeight > 0f)          s.bridgeRailHeight = rd.bridgeRailHeight;
+                if (rd.bridgeRailThickness > 0f)       s.bridgeRailThickness = rd.bridgeRailThickness;
+                s.bridgeEnableTruss = rd.bridgeEnableTruss;
+                if (rd.bridgeTrussHeight > 0f)         s.bridgeTrussHeight = rd.bridgeTrussHeight;
+                if (rd.bridgeTrussThickness > 0f)      s.bridgeTrussThickness = rd.bridgeTrussThickness;
+                if (rd.bridgeTrussPostSpacing > 0f)    s.bridgeTrussPostSpacing = rd.bridgeTrussPostSpacing;
+            }
+
+            // ── Prompt fallback for tunnel/bridge negation ──
             if (p.Contains("no tunnel") || p.Contains("no tunnels") || p.Contains("without tunnels"))
                 s.tunnelTriggerCoverMeters = 9999f;
-    
+
             if (p.Contains("no bridge") || p.Contains("no bridges") || p.Contains("without bridges"))
                 s.bridgeTriggerDropMeters = 9999f;
-    
+
             return s;
         }
     
@@ -1036,7 +1080,8 @@ namespace Antimatter
                         bool snap =
                             n.Contains("building") || n.Contains("house") || n.Contains("tower") ||
                             n.Contains("block") || n.Contains("settlement") || n.Contains("village") ||
-                            n.Contains("town") || n.Contains("landmark");
+                            n.Contains("town") || n.Contains("landmark") ||
+                            n.Contains("med_") || n.Contains("house_") || n.Contains("bld_") || n.Contains("medbuilding_");
     
                         if (!snap) continue;
     
@@ -1069,27 +1114,51 @@ namespace Antimatter
         {
             if (constraints != null && constraints.forbidTerrain) return;
             if (wg == null || !wg.enabled) return;
-    
+
             Terrain existing = FindTerrainInScene(scene);
-    
-            TerrainGenerator.TerrainPreset preset;
-            if (!string.IsNullOrWhiteSpace(wg.terrainPreset))
-                preset = MapTerrainPreset(wg.terrainPreset);
-            else
-                preset = TerrainGenerator.GuessPresetFromPrompt(userPrompt);
-    
-            int seed = StablePromptSeed(userPrompt);
-    
+
+            // Use AI-provided terrain params if available, otherwise fall back to preset
+            bool hasSchemaParams = wg.terrain != null;
+            string presetHint = !string.IsNullOrWhiteSpace(wg.terrainPreset) ? wg.terrainPreset : userPrompt;
+
             if (existing == null)
             {
-                var go = TerrainGenerator.CreateOrReplaceTerrain("GeneratedTerrain", preset, seed, Vector3.zero);
+                GameObject go;
+                if (hasSchemaParams)
+                {
+                    go = TerrainGenerator.CreateOrReplaceTerrain("GeneratedTerrain", wg.terrain, presetHint, Vector3.zero);
+                }
+                else
+                {
+                    var preset = !string.IsNullOrWhiteSpace(wg.terrainPreset)
+                        ? MapTerrainPreset(wg.terrainPreset)
+                        : TerrainGenerator.GuessPresetFromPrompt(userPrompt);
+                    int seed = StablePromptSeed(userPrompt);
+                    go = TerrainGenerator.CreateOrReplaceTerrain("GeneratedTerrain", preset, seed, Vector3.zero);
+                }
                 SceneManager.MoveGameObjectToScene(go, scene);
-                Debug.Log($"Terrain generated (new): {preset} (seed {seed})");
+                Debug.Log($"Terrain generated (new) with {(hasSchemaParams ? "AI params" : "preset")}");
                 return;
             }
-    
-            ApplyHeightsToTerrain(existing, preset, seed);
-            Debug.Log($"Terrain shaped (existing): {preset} (seed {seed})");
+
+            // Existing terrain: apply heights
+            if (hasSchemaParams)
+            {
+                var preset = TerrainGenerator.GuessPresetFromPrompt(presetHint);
+                var defaults = TerrainGenerator.DefaultParams(preset, wg.terrain.seed);
+                var merged = TerrainGenerator.MergeSchemaIntoParams(wg.terrain, defaults);
+                // Use temp terrain approach to copy heights
+                ApplyHeightsToTerrain(existing, preset, merged.seed);
+            }
+            else
+            {
+                var preset = !string.IsNullOrWhiteSpace(wg.terrainPreset)
+                    ? MapTerrainPreset(wg.terrainPreset)
+                    : TerrainGenerator.GuessPresetFromPrompt(userPrompt);
+                int seed = StablePromptSeed(userPrompt);
+                ApplyHeightsToTerrain(existing, preset, seed);
+            }
+            Debug.Log($"Terrain shaped (existing) with {(hasSchemaParams ? "AI params" : "preset")}");
         }
     
         private static Terrain FindTerrainInScene(Scene scene)

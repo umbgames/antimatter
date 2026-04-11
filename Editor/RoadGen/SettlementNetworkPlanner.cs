@@ -18,6 +18,78 @@ namespace Antimatter
             public string name;
             public bool isTown;
             public SettlementStyle style;
+
+            // Per-settlement overrides (0 = use global default)
+            public float lotMinSize;
+            public float lotMaxSize;
+            public float buildingHeightMin;
+            public float buildingHeightMax;
+            public float roadClearance;
+            public float padRadius;
+        }
+
+        /// <summary>
+        /// Merges per-settlement overrides into a copy of the global settings.
+        /// Fields with value > 0 in the Settlement override the global.
+        /// </summary>
+        private static SettlementGenSettings MergeOverrides(SettlementGenSettings global, Settlement set)
+        {
+            bool hasOverride =
+                set.lotMinSize > 0f || set.lotMaxSize > 0f ||
+                set.buildingHeightMin > 0f || set.buildingHeightMax > 0f ||
+                set.roadClearance > 0f || set.padRadius > 0f;
+
+            if (!hasOverride) return global;
+
+            // Shallow clone via MemberwiseClone workaround (class, not struct)
+            var merged = new SettlementGenSettings
+            {
+                style = global.style,
+                autoModernWeight = global.autoModernWeight,
+                autoMedievalWeight = global.autoMedievalWeight,
+                autoSuburbanWeight = global.autoSuburbanWeight,
+                seed = global.seed,
+                maxSettlements = global.maxSettlements,
+                hubTownChance = global.hubTownChance,
+                hubTownMinSpacing = global.hubTownMinSpacing,
+                enableRoadsideVillages = global.enableRoadsideVillages,
+                roadsideStep = global.roadsideStep,
+                roadsideVillageChance = global.roadsideVillageChance,
+                maxSlopeDeg = global.maxSlopeDeg,
+                preferLowlands = global.preferLowlands,
+                avoidHighPeaks = global.avoidHighPeaks,
+                settlementRadius = global.settlementRadius,
+                buildingsPerTown = global.buildingsPerTown,
+                buildingsPerVillage = global.buildingsPerVillage,
+                lotMinSize = global.lotMinSize,
+                lotMaxSize = global.lotMaxSize,
+                buildingHeightMin = global.buildingHeightMin,
+                buildingHeightMax = global.buildingHeightMax,
+                roadClearance = global.roadClearance,
+                padRadius = global.padRadius,
+                padFalloff = global.padFalloff,
+                padBlend = global.padBlend,
+                modernGridCellsPerSide = global.modernGridCellsPerSide,
+                modernBlockCellSize = global.modernBlockCellSize,
+                modernStreetGap = global.modernStreetGap,
+                medievalAddMarket = global.medievalAddMarket,
+                medievalAddWalls = global.medievalAddWalls,
+                medievalRingCount = global.medievalRingCount,
+                medievalRingSpacingFactor = global.medievalRingSpacingFactor,
+                medievalWallThickness = global.medievalWallThickness,
+                suburbanCulDeSacCount = global.suburbanCulDeSacCount,
+                suburbanCulDeSacRadius = global.suburbanCulDeSacRadius,
+                suburbanYardPadding = global.suburbanYardPadding
+            };
+
+            if (set.lotMinSize > 0f)        merged.lotMinSize = set.lotMinSize;
+            if (set.lotMaxSize > 0f)        merged.lotMaxSize = set.lotMaxSize;
+            if (set.buildingHeightMin > 0f) merged.buildingHeightMin = set.buildingHeightMin;
+            if (set.buildingHeightMax > 0f) merged.buildingHeightMax = set.buildingHeightMax;
+            if (set.roadClearance > 0f)     merged.roadClearance = set.roadClearance;
+            if (set.padRadius > 0f)         merged.padRadius = set.padRadius;
+
+            return merged;
         }
     
         // ------------------------------------------------------------------------
@@ -34,7 +106,8 @@ namespace Antimatter
             r = Mathf.Max(0.5f, r);
             if (s.padRadius > 0f) r = Mathf.Max(r, s.padRadius);
     
-            TerrainStamper.StampPadToTerrain(terrain, world, r, s.padFalloff, s.padBlend);
+            // Increased blend for aggressive carving as per user request
+            TerrainStamper.StampPadToTerrain(terrain, world, r, s.padFalloff, Mathf.Max(s.padBlend, 0.95f));
         }
     
         // ------------------------------------------------------------------------
@@ -89,22 +162,25 @@ namespace Antimatter
                 setRoot.transform.SetParent(parent, false);
                 setRoot.transform.position = set.center;
     
+                // Apply per-settlement overrides from the AI plan
+                var effectiveSettings = MergeOverrides(s, set);
+    
                 switch (set.style)
                 {
                     case SettlementStyle.ModernCityBlocks:
-                        BuildModernBlocks(scene, terrain, roadLines, setRoot.transform, set, s, rng, buildingMaterial);
+                        BuildModernBlocks(scene, terrain, roadLines, setRoot.transform, set, effectiveSettings, rng, buildingMaterial);
                         break;
     
                     case SettlementStyle.MedievalTown:
-                        BuildMedievalTown(scene, terrain, roadLines, setRoot.transform, set, s, rng, buildingMaterial, wallMaterial);
+                        BuildMedievalTown(scene, terrain, roadLines, setRoot.transform, set, effectiveSettings, rng, buildingMaterial, wallMaterial);
                         break;
     
                     case SettlementStyle.Suburban:
-                        BuildSuburban(scene, terrain, roadLines, setRoot.transform, set, s, rng, buildingMaterial);
+                        BuildSuburban(scene, terrain, roadLines, setRoot.transform, set, effectiveSettings, rng, buildingMaterial);
                         break;
     
                     default:
-                        BuildSuburban(scene, terrain, roadLines, setRoot.transform, set, s, rng, buildingMaterial);
+                        BuildSuburban(scene, terrain, roadLines, setRoot.transform, set, effectiveSettings, rng, buildingMaterial);
                         break;
                 }
             }
@@ -187,8 +263,15 @@ namespace Antimatter
                         radius = ext.radius > 0 ? ext.radius : s.settlementRadius,
                         buildingCount = ext.buildingCount > 0 ? ext.buildingCount : s.buildingsPerTown,
                         name = $"Settlement_{settlements.Count:00}",
-                        isTown = true,
-                        style = style
+                        isTown = (ext.buildingCount > 0 ? ext.buildingCount : s.buildingsPerTown) >= 40,
+                        style = style,
+                        // Pass per-settlement overrides through
+                        lotMinSize = ext.lotMinSize,
+                        lotMaxSize = ext.lotMaxSize,
+                        buildingHeightMin = ext.buildingHeightMin,
+                        buildingHeightMax = ext.buildingHeightMax,
+                        roadClearance = ext.roadClearance,
+                        padRadius = ext.padRadius
                     });
                 }
                 return settlements;
@@ -215,7 +298,7 @@ namespace Antimatter
                     radius = s.settlementRadius,
                     buildingCount = s.buildingsPerTown,
                     name = $"Settlement_{settlements.Count:00}",
-                    isTown = true,
+                    isTown = s.buildingsPerTown >= 40,
                     style = chosenStyle
                 });
             }
@@ -286,13 +369,14 @@ namespace Antimatter
             if (roadDir.sqrMagnitude < 0.0001f) roadDir = Vector3.forward;
             Quaternion rot = Quaternion.LookRotation(new Vector3(roadDir.x, 0f, roadDir.z), Vector3.up);
     
-            int placed = 0;
+            int placedCount = 0;
+            var placedPos = new List<Vector3>();
             float half = (cells * cell) * 0.5f;
     
             for (int gx = 0; gx < cells; gx++)
             for (int gz = 0; gz < cells; gz++)
             {
-                if (placed >= set.buildingCount) break;
+                if (placedCount >= set.buildingCount) break;
     
                 if ((float)rng.NextDouble() < 0.12f) continue;
     
@@ -309,6 +393,9 @@ namespace Antimatter
     
                 if (!IsBuildable(terrain, world, s)) continue;
                 if (DistanceToRoadsXZ(world, roadLines) < s.roadClearance) continue;
+
+                // For modern blocks, we check vs placed list too
+                if (TooCloseToPlaced(world, placedPos, Mathf.Max(parcelW, parcelD) * 0.8f)) continue;
     
                 float padR = Mathf.Max(4f, Mathf.Min(parcelW, parcelD) * 0.65f);
                 StampPad(terrain, world, s, padR);
@@ -320,8 +407,9 @@ namespace Antimatter
                 float w = parcelW * Mathf.Lerp(0.55f, 0.90f, (float)rng.NextDouble());
                 float d = parcelD * Mathf.Lerp(0.55f, 0.90f, (float)rng.NextDouble());
     
-                CreateBuilding(scene, terrain, parent, world, w, d, h, rot, buildingMaterial, $"BlockBld_{placed:000}");
-                placed++;
+                CreateBuilding(scene, terrain, parent, world, w, d, h, rot, buildingMaterial, $"BlockBld_{placedCount:000}");
+                placedPos.Add(world);
+                placedCount++;
             }
         }
     
@@ -344,45 +432,50 @@ namespace Antimatter
                 StampPad(terrain, set.center, s, 18f);
                 CreateSimpleLandmark(scene, terrain, parent, set.center, s, buildingMaterial, modern: false);
             }
-    
+
             int rings = Mathf.Max(2, s.medievalRingCount);
             float ringStep = Mathf.Max(8f, set.radius * Mathf.Clamp(s.medievalRingSpacingFactor, 0.12f, 0.55f));
-    
+
             int placed = 0;
+            var placedPos = new List<Vector3>();
             for (int r = 1; r <= rings && placed < set.buildingCount; r++)
             {
                 float rad = Mathf.Min(set.radius * 0.92f, r * ringStep);
-                int onRing = Mathf.Max(10, Mathf.RoundToInt((2f * Mathf.PI * rad) / Mathf.Lerp(14f, 24f, (float)rng.NextDouble())));
-    
+                int onRing = Mathf.Max(8, Mathf.RoundToInt((2f * Mathf.PI * rad) / Mathf.Lerp(30f, 48f, (float)rng.NextDouble())));
+                int skipped = 0;
                 for (int i = 0; i < onRing && placed < set.buildingCount; i++)
                 {
                     float a = ((i / (float)onRing) * Mathf.PI * 2f) + ((float)rng.NextDouble() - 0.5f) * 0.25f;
-    
+
                     Vector3 pos = set.center + new Vector3(Mathf.Cos(a) * rad, 0f, Mathf.Sin(a) * rad);
                     pos += new Vector3(((float)rng.NextDouble() - 0.5f) * 6f, 0f, ((float)rng.NextDouble() - 0.5f) * 6f);
-    
+
                     pos = SnapToTerrain(terrain, pos);
-    
-                    if (!IsBuildable(terrain, pos, s)) continue;
+
+                    if (!IsBuildable(terrain, pos, s)) { skipped++; continue; }
                     if (DistanceToRoadsXZ(pos, roadLines) < s.roadClearance) continue;
-    
+
                     float lot = Mathf.Lerp(s.lotMinSize * 0.8f, s.lotMaxSize * 1.1f, (float)rng.NextDouble());
+                    if (TooCloseToPlaced(pos, placedPos, lot * 1.1f)) continue; // New proximity check
+
                     float w = lot * Mathf.Lerp(0.55f, 0.95f, (float)rng.NextDouble());
                     float d = lot * Mathf.Lerp(0.55f, 0.95f, (float)rng.NextDouble());
                     float h = Mathf.Lerp(s.buildingHeightMin * 0.7f, s.buildingHeightMax * 1.4f, (float)rng.NextDouble());
-    
+
                     StampPad(terrain, pos, s, Mathf.Max(6f, lot * 0.6f));
-    
+
                     Vector3 toCenter = (set.center - pos); toCenter.y = 0f;
                     Quaternion rot = toCenter.sqrMagnitude < 0.0001f
                         ? Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f)
                         : Quaternion.LookRotation(toCenter.normalized, Vector3.up);
-    
-                    CreateBuilding(scene, terrain, parent, pos, w, d, h, rot, buildingMaterial, $"Med_{placed:000}");
+
+                    CreateBuilding(scene, terrain, parent, pos, w, d, h, rot, buildingMaterial, $"MedBuilding_{placed:000}");
+                    placedPos.Add(pos);
                     placed++;
                 }
+                if (skipped > 5) Debug.LogWarning($"MedievalTown: Skipped {skipped} buildings due to slope/buildability constraints at {set.name}");
             }
-    
+
             if (s.medievalAddWalls)
                 BuildMedievalWallRing(scene, terrain, parent, set.center, set.radius * 0.98f, s.medievalWallThickness, wallMaterial, rng);
         }
@@ -485,6 +578,7 @@ namespace Antimatter
             int perCul = Mathf.Max(6, Mathf.RoundToInt(total / (float)Mathf.Max(1, culCenters.Count)));
     
             int placed = 0;
+            var placedPos = new List<Vector3>();
             foreach (var cc in culCenters)
             {
                 StampPad(terrain, cc, s, culRad * 0.75f);
@@ -501,6 +595,7 @@ namespace Antimatter
     
                     float yard = Mathf.Max(0f, s.suburbanYardPadding);
                     float lot = Mathf.Lerp(s.lotMinSize * 0.65f, s.lotMaxSize * 0.9f, (float)rng.NextDouble());
+                    if (TooCloseToPlaced(pos, placedPos, lot * 1.05f)) continue;
                     float w = lot * Mathf.Lerp(0.45f, 0.80f, (float)rng.NextDouble());
                     float d = lot * Mathf.Lerp(0.45f, 0.80f, (float)rng.NextDouble());
                     float h = Mathf.Lerp(s.buildingHeightMin * 0.35f, s.buildingHeightMax * 0.65f, (float)rng.NextDouble());
@@ -513,6 +608,7 @@ namespace Antimatter
                         : Quaternion.LookRotation(toC.normalized, Vector3.up);
     
                     CreateBuilding(scene, terrain, parent, pos, w, d, h, rot, buildingMaterial, $"House_{placed:000}");
+                    placedPos.Add(pos);
                     placed++;
                 }
             }
@@ -527,6 +623,7 @@ namespace Antimatter
                 if (DistanceToRoadsXZ(pos, roadLines) < s.roadClearance) continue;
     
                 float lot = Mathf.Lerp(s.lotMinSize * 0.6f, s.lotMaxSize * 0.9f, (float)rng.NextDouble());
+                if (TooCloseToPlaced(pos, placedPos, lot * 1.15f)) continue;
                 float w = lot * Mathf.Lerp(0.45f, 0.75f, (float)rng.NextDouble());
                 float d = lot * Mathf.Lerp(0.45f, 0.75f, (float)rng.NextDouble());
                 float h = Mathf.Lerp(s.buildingHeightMin * 0.35f, s.buildingHeightMax * 0.65f, (float)rng.NextDouble());
@@ -539,6 +636,7 @@ namespace Antimatter
                     : Quaternion.LookRotation(new Vector3(dirToRoad.x, 0f, dirToRoad.z), Vector3.up);
     
                 CreateBuilding(scene, terrain, parent, pos, w, d, h, rot, buildingMaterial, $"House_{placed:000}");
+                placedPos.Add(pos);
                 placed++;
             }
         }
@@ -619,7 +717,7 @@ namespace Antimatter
                 return false;
     
             float slope = SampleSlopeDeg(terrain, p);
-            if (slope > s.maxSlopeDeg) return false;
+            if (slope > 75f) return false; // Relaxed from s.maxSlopeDeg as per user request
     
             float y = terrain.SampleHeight(p) + tp.y;
             float h01 = Mathf.InverseLerp(tp.y, tp.y + ts.y, y);
@@ -780,9 +878,21 @@ namespace Antimatter
     
         private static Vector3 RandomPointInCircle(Vector3 center, float radius, System.Random rng)
         {
-            float ang = (float)rng.NextDouble() * Mathf.PI * 2f;
-            float r = Mathf.Sqrt((float)rng.NextDouble()) * radius;
-            return center + new Vector3(Mathf.Cos(ang) * r, 0f, Mathf.Sin(ang) * r);
+            float a = (float)rng.NextDouble() * Mathf.PI * 2f;
+            float r = radius * Mathf.Sqrt((float)rng.NextDouble());
+            return center + new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
+        }
+    
+        private static bool TooCloseToPlaced(Vector3 pos, List<Vector3> placed, float minDist)
+        {
+            float d2 = minDist * minDist;
+            for (int i = 0; i < placed.Count; i++)
+            {
+                float dx = pos.x - placed[i].x;
+                float dz = pos.z - placed[i].z;
+                if (dx * dx + dz * dz < d2) return true;
+            }
+            return false;
         }
     
         private static float DistPointSeg(Vector2 p, Vector2 a, Vector2 b)

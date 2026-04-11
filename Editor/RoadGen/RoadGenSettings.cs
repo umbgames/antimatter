@@ -10,14 +10,14 @@ namespace Antimatter
         [Range(64, 1024)] public int gridResolution = 256;
     
         [Header("Hubs / Network")]
-        [Range(4, 64)] public int hubCount = 18;
-        [Range(0, 32)] public int extraConnections = 6;
-        [Range(10f, 500f)] public float hubMinSpacingWorld = 80f;
+        [Range(4, 128)] public int hubCount = 32;
+        [Range(0, 128)] public int extraConnections = 24;
+        [Range(10f, 500f)] public float hubMinSpacingWorld = 60f;
     
         [Header("Surface Constraints")]
-        [Range(1f, 30f)] public float maxSurfaceSlopeDeg = 12f;   // soft limit (penalty starts)
-        [Range(1f, 45f)] public float hardBlockSlopeDeg = 18f;    // hard block for surface routing
-        [Range(0.01f, 0.25f)] public float maxRoadGrade = 0.10f;  // 10% grade default
+        [Range(1f, 60f)] public float maxSurfaceSlopeDeg = 24f;   // soft limit (penalty starts)
+        [Range(1f, 90f)] public float hardBlockSlopeDeg = 45f;    // hard block for surface routing
+        [Range(0.01f, 0.5f)] public float maxRoadGrade = 0.18f;  // 18% grade default
     
         [Header("Cost Weights")]
         [Range(0f, 20f)] public float heightPenalty = 4f;         // prefer lowlands/valleys
@@ -30,9 +30,9 @@ namespace Antimatter
         [Range(0f, 1f)] public float roadYOffset = 0.02f;
     
         [Header("Terrain Stamping")]
-        [Range(0f, 10f)] public float stampFalloff = 4f;
-        [Range(0f, 10f)] public float stampBlend = 2f;
-        [Range(0f, 5f)] public float stampCutDepth = 0.8f;
+        [Range(0f, 20f)] public float stampFalloff = 6f;
+        [Range(0f, 20f)] public float stampBlend = 10f; // Multi-pass intensity simulation
+        [Range(0f, 10f)] public float stampCutDepth = 1.2f;
     
         [Header("Bridge")]
         [Range(1f, 50f)] public float bridgeTriggerDropMeters = 6f;

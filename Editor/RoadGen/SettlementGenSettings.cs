@@ -36,7 +36,7 @@ namespace Antimatter
         [Range(0f, 1f)] public float roadsideVillageChance = 0.35f;
     
         [Header("Terrain Filters")]
-        [Range(1f, 45f)] public float maxSlopeDeg = 14f;
+        [Range(1f, 90f)] public float maxSlopeDeg = 45f;
         [Range(0f, 1f)] public float preferLowlands = 0.7f;
         [Range(0f, 1f)] public float avoidHighPeaks = 0.85f;
     
@@ -55,9 +55,9 @@ namespace Antimatter
         [Range(2f, 200f)] public float roadClearance = 10f;
     
         [Header("Terrain Stamping (per lot)")]
-        [Range(0f, 60f)] public float padRadius = 10f;
-        [Range(0f, 60f)] public float padFalloff = 6f;
-        [Range(0f, 1f)] public float padBlend = 0.9f;
+        [Range(0f, 60f)] public float padRadius = 14f;
+        [Range(0f, 60f)] public float padFalloff = 8f;
+        [Range(0f, 1f)] public float padBlend = 1.0f;
     
         // ---------------- Modern blocks ----------------
         [Header("Modern Blocks")]
@@ -67,16 +67,17 @@ namespace Antimatter
     
         // ---------------- Medieval ----------------
         [Header("Medieval Town")]
+        [Header("Medieval (Village)")]
+        [Range(2, 12)] public int medievalRingCount = 4;
+        [Range(0.01f, 1.5f)] public float medievalRingSpacingFactor = 0.45f;
         public bool medievalAddMarket = true;
-        public bool medievalAddWalls = false;
-        [Range(2, 8)] public int medievalRingCount = 4;
-        [Range(0.2f, 1.2f)] public float medievalRingSpacingFactor = 0.22f; // portion of radius per ring
-        [Range(1f, 30f)] public float medievalWallThickness = 3f;
+        public bool medievalAddWalls = true;
+        [Range(1f, 20f)] public float medievalWallThickness = 6f;
     
         // ---------------- Suburban ----------------
-        [Header("Suburban")]
-        [Range(1, 12)] public int suburbanCulDeSacCount = 5;
-        [Range(25f, 600f)] public float suburbanCulDeSacRadius = 30f;
-        [Range(0.2f, 30f)] public float suburbanYardPadding = 3.0f;
+        [Header("Suburban settings")]
+        [Range(1, 10)] public int suburbanCulDeSacCount = 3;
+        [Range(5f, 60f)] public float suburbanCulDeSacRadius = 25f;
+        [Range(0f, 40f)] public float suburbanYardPadding = 12f;
     }
 }

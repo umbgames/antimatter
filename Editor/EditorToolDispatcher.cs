@@ -43,9 +43,10 @@ namespace Antimatter
                 "setobjectactive" => "Toggling object visibility...",
                 "generateroadnetwork" => "Generating road system...",
                 "generatesettlements" => "Generating city settlements...",
-                "generatecity" => "Generating full city layout...",
                 "generateworld" => "Generating complete world (terrain + roads + settlements)...",
-                "arrangecityscene" => "Arranging city onto terrain...",
+                "queryterraininfo" => "Querying terrain info...",
+                "sampleterrain" => "Sampling terrain heights...",
+                "terrainheightgrid" => "Getting terrain height grid...",
                 "focussceneview" => "Focusing Scene View camera...",
                 "searchAssets" => "Searching local project assets...",
                 "generateCanvasUI" => "Generating Canvas UI...",
@@ -353,12 +354,24 @@ namespace Antimatter
             Register(new AgentTool
             {
                 Name = "generateTerrain",
-                Description = "Generates terrain in the active scene using a preset.",
+                Description = "Generates terrain in the active scene. Use a preset for quick generation, or provide full parameter overrides for fine-tuned AI control. Any non-zero parameter overrides the preset default.",
                 ParameterSchema = @"{
                     ""type"":""object"",
                     ""properties"":{
-                        ""preset"":{""type"":""string"",""enum"":[""Plains"",""Hills"",""Mountains"",""MountainValley"",""Island""],""description"":""Terrain preset""},
-                        ""seed"":{""type"":""integer"",""description"":""Random seed for terrain generation""}
+                        ""preset"":{""type"":""string"",""enum"":[""Plains"",""Hills"",""Mountains"",""MountainValley"",""Island""],""description"":""Base terrain preset (default Hills)""},
+                        ""seed"":{""type"":""integer"",""description"":""Random seed""},
+                        ""sizeXZ"":{""type"":""integer"",""description"":""Terrain width/length in metres""},
+                        ""heightY"":{""type"":""integer"",""description"":""Max height in metres""},
+                        ""heightmapResolution"":{""type"":""integer"",""description"":""Heightmap resolution (e.g. 257, 513)""},
+                        ""octaves"":{""type"":""integer"",""description"":""Noise octaves (1-8)""},
+                        ""lacunarity"":{""type"":""number"",""description"":""Noise lacunarity""},
+                        ""persistence"":{""type"":""number"",""description"":""Noise persistence""},
+                        ""baseFrequency"":{""type"":""number"",""description"":""Base noise frequency""},
+                        ""ridgeStrength"":{""type"":""number"",""description"":""Ridge noise strength 0..1""},
+                        ""erosionPasses"":{""type"":""number"",""description"":""Smoothing passes 0..50""},
+                        ""seaLevel"":{""type"":""number"",""description"":""Sea level 0..1""},
+                        ""valleyWidth"":{""type"":""number"",""description"":""Valley width 0..1""},
+                        ""valleyDepth"":{""type"":""number"",""description"":""Valley depth 0..1""}
                     },
                     ""additionalProperties"":false
                 }",
@@ -427,36 +440,6 @@ namespace Antimatter
 
             Register(new AgentTool
             {
-                Name = "generateCity",
-                Description = "Generates a complete procedural city with roads, sidewalks, and buildings on terrain. Creates terrain automatically if none exists. This is the easiest way to build a city — just specify building count and style.",
-                ParameterSchema = @"{
-                    ""type"":""object"",
-                    ""properties"":{
-                        ""buildingCount"":{""type"":""integer"",""description"":""Number of buildings (8-60)""},
-                        ""terrainPreset"":{""type"":""string"",""enum"":[""Plains"",""Hills"",""Mountains"",""MountainValley"",""Island""],""description"":""Terrain type to generate, defaults to Hills""},
-                        ""prompt"":{""type"":""string"",""description"":""Optional style description e.g. 'modern downtown' or 'medieval village'""}
-                    },
-                    ""additionalProperties"":false
-                }",
-                Execute = ToolGenerateCity
-            });
-
-            Register(new AgentTool
-            {
-                Name = "arrangeCityScene",
-                Description = "Arranges existing buildings/objects in the scene into a proper city layout on terrain. Automatically builds roads, sidewalks, stamps terrain flat under buildings, and snaps everything to the terrain surface. Requires terrain and building objects to already exist in the scene.",
-                ParameterSchema = @"{
-                    ""type"":""object"",
-                    ""properties"":{
-                        ""prompt"":{""type"":""string"",""description"":""Optional style description""}
-                    },
-                    ""additionalProperties"":false
-                }",
-                Execute = ToolArrangeCityScene
-            });
-
-            Register(new AgentTool
-            {
                 Name = "focusSceneView",
                 Description = "Focuses the Unity Scene View camera on a specific object, or on the entire scene if no object is specified.",
                 ParameterSchema = @"{
@@ -467,6 +450,96 @@ namespace Antimatter
                     ""additionalProperties"":false
                 }",
                 Execute = ToolFocusSceneView
+            });
+
+            // ── Spatial Awareness Tools ──
+            Register(new AgentTool
+            {
+                Name = "queryTerrainInfo",
+                Description = "Returns terrain bounds, resolution, size, and world-space extents. Call this FIRST after generating terrain to understand the coordinate system before placing objects.",
+                ParameterSchema = @"{""type"":""object"",""properties"":{},""additionalProperties"":false}",
+                Execute = TerrainQueryTool.ToolQueryTerrainInfo
+            });
+
+            Register(new AgentTool
+            {
+                Name = "sampleTerrain",
+                Description = "Samples terrain height, slope, and surface normal at specific world-space (x, z) coordinates. Use this to check exact heights before placing buildings or roads. Max 64 points per call.",
+                ParameterSchema = @"{
+                    ""type"":""object"",
+                    ""required"":[""points""],
+                    ""properties"":{
+                        ""points"":{
+                            ""type"":""array"",
+                            ""items"":{
+                                ""type"":""object"",
+                                ""properties"":{""x"":{""type"":""number""},""z"":{""type"":""number""}},
+                                ""required"":[""x"",""z""]
+                            }
+                        }
+                    },
+                    ""additionalProperties"":false
+                }",
+                Execute = TerrainQueryTool.ToolSampleTerrain
+            });
+
+            Register(new AgentTool
+            {
+                Name = "terrainHeightGrid",
+                Description = "Returns a low-resolution grid of terrain heights (4x4 to 16x16) for spatial overview. Helps understand the general shape of the terrain landscape before placing settlements or roads.",
+                ParameterSchema = @"{
+                    ""type"":""object"",
+                    ""properties"":{
+                        ""gridSize"":{""type"":""integer"",""description"":""Grid resolution (4-16, default 8)""}
+                    },
+                    ""additionalProperties"":false
+                }",
+                Execute = TerrainQueryTool.ToolTerrainHeightGrid
+            });
+
+            Register(new AgentTool
+            {
+                Name = "generateWorld",
+                Description = "Generates a complete world in one call: terrain + road network + settlements. This is the most efficient way to create a full open-world scene. Provide terrain params, road hubs, and settlement nodes. All sub-systems are optional.",
+                ParameterSchema = @"{
+                    ""type"":""object"",
+                    ""properties"":{
+                        ""terrainPreset"":{""type"":""string"",""enum"":[""Plains"",""Hills"",""Mountains"",""MountainValley"",""Island""]},
+                        ""terrainSeed"":{""type"":""integer""},
+                        ""sizeXZ"":{""type"":""integer"",""description"":""Terrain size in metres""},
+                        ""heightY"":{""type"":""integer"",""description"":""Max terrain height""},
+                        ""octaves"":{""type"":""integer""},
+                        ""lacunarity"":{""type"":""number""},
+                        ""persistence"":{""type"":""number""},
+                        ""baseFrequency"":{""type"":""number""},
+                        ""ridgeStrength"":{""type"":""number""},
+                        ""erosionPasses"":{""type"":""number""},
+                        ""roadHubs"":{
+                            ""type"":""array"",
+                            ""items"":{
+                                ""type"":""object"",
+                                ""properties"":{""x"":{""type"":""number""},""y"":{""type"":""number""},""z"":{""type"":""number""}},
+                                ""required"":[""x"",""y"",""z""]
+                            }
+                        },
+                        ""settlements"":{
+                            ""type"":""array"",
+                            ""items"":{
+                                ""type"":""object"",
+                                ""properties"":{
+                                    ""x"":{""type"":""number""},""y"":{""type"":""number""},""z"":{""type"":""number""},
+                                    ""radius"":{""type"":""number""},
+                                    ""buildingCount"":{""type"":""integer""},
+                                    ""style"":{""type"":""string"",""enum"":[""Auto"",""ModernCityBlocks"",""MedievalTown"",""Suburban""]}
+                                },
+                                ""required"":[""x"",""y"",""z"",""radius"",""buildingCount"",""style""]
+                            }
+                        },
+                        ""prompt"":{""type"":""string"",""description"":""Style prompt (e.g. 'medieval mountain kingdom with bridges')""}
+                    },
+                    ""additionalProperties"":false
+                }",
+                Execute = ToolGenerateWorld
             });
         }
     
@@ -806,8 +879,26 @@ namespace Antimatter
                 _ => TerrainGenerator.TerrainPreset.Hills
             };
     
+            // Build SchemaTerrainParams from the args for AI-controlled generation
+            var schema = new SchemaTerrainParams
+            {
+                seed = seed,
+                sizeXZ = args["sizeXZ"]?.Value<int>() ?? 0,
+                heightY = args["heightY"]?.Value<int>() ?? 0,
+                heightmapResolution = args["heightmapResolution"]?.Value<int>() ?? 0,
+                octaves = args["octaves"]?.Value<int>() ?? 0,
+                lacunarity = args["lacunarity"]?.Value<float>() ?? 0f,
+                persistence = args["persistence"]?.Value<float>() ?? 0f,
+                baseFrequency = args["baseFrequency"]?.Value<float>() ?? 0f,
+                ridgeStrength = args["ridgeStrength"]?.Value<float>() ?? 0f,
+                erosionPasses = args["erosionPasses"]?.Value<float>() ?? 0f,
+                seaLevel = args["seaLevel"]?.Value<float>() ?? 0f,
+                valleyWidth = args["valleyWidth"]?.Value<float>() ?? 0f,
+                valleyDepth = args["valleyDepth"]?.Value<float>() ?? 0f
+            };
+
             var scene = SceneManager.GetActiveScene();
-            var go = TerrainGenerator.CreateOrReplaceTerrain("GeneratedTerrain", preset, seed, Vector3.zero);
+            var go = TerrainGenerator.CreateOrReplaceTerrain("GeneratedTerrain", schema, presetStr, Vector3.zero);
             SceneManager.MoveGameObjectToScene(go, scene);
 
             // Auto-select & frame in Scene View so the user can see it
@@ -817,8 +908,10 @@ namespace Antimatter
             {
                 SceneView.lastActiveSceneView.FrameSelected();
             }
-    
-            return AgentToolResult.Ok($"Generated terrain with preset={presetStr} seed={seed}. Terrain is now selected and framed in Scene View.");
+
+            var t = go.GetComponent<Terrain>();
+            string sizeInfo = t != null ? $" Size=({t.terrainData.size.x:F0},{t.terrainData.size.y:F0},{t.terrainData.size.z:F0})" : "";
+            return AgentToolResult.Ok($"Generated terrain with preset={presetStr} seed={seed}.{sizeInfo} Terrain is now selected and framed in Scene View.");
         }
     
         private static AgentToolResult ToolSetObjectActive(JObject args)
@@ -912,136 +1005,120 @@ namespace Antimatter
     
         // ──────────────────── NEW TOOL IMPLEMENTATIONS ────────────────────
 
-        private static AgentToolResult ToolGenerateCity(JObject args)
+        // generateCity and arrangeCityScene removed — use generateSettlements + generateRoadNetwork instead.
+
+        private static AgentToolResult ToolGenerateWorld(JObject args)
         {
             var scene = SceneManager.GetActiveScene();
             if (!scene.IsValid())
                 return AgentToolResult.Fail("No active scene.");
 
-            int buildingCount = args["buildingCount"]?.Value<int>() ?? 16;
-            buildingCount = Mathf.Clamp(buildingCount, 4, 80);
-            string terrainPresetStr = args["terrainPreset"]?.Value<string>() ?? "Hills";
             string prompt = args["prompt"]?.Value<string>() ?? "";
+            var sb = new System.Text.StringBuilder();
 
-            // 1) Ensure terrain exists
-            var terrain = UnityEngine.Object.FindObjectOfType<Terrain>();
-            if (terrain == null)
+            // ── 1. Terrain ──
+            string presetStr = args["terrainPreset"]?.Value<string>() ?? "Hills";
+            int terrainSeed = args["terrainSeed"]?.Value<int>() ?? UnityEngine.Random.Range(0, int.MaxValue);
+
+            var schema = new SchemaTerrainParams
             {
-                TerrainGenerator.TerrainPreset preset = terrainPresetStr switch
+                seed = terrainSeed,
+                sizeXZ = args["sizeXZ"]?.Value<int>() ?? 0,
+                heightY = args["heightY"]?.Value<int>() ?? 0,
+                octaves = args["octaves"]?.Value<int>() ?? 0,
+                lacunarity = args["lacunarity"]?.Value<float>() ?? 0f,
+                persistence = args["persistence"]?.Value<float>() ?? 0f,
+                baseFrequency = args["baseFrequency"]?.Value<float>() ?? 0f,
+                ridgeStrength = args["ridgeStrength"]?.Value<float>() ?? 0f,
+                erosionPasses = args["erosionPasses"]?.Value<float>() ?? 0f
+            };
+
+            var terrainGo = TerrainGenerator.CreateOrReplaceTerrain("GeneratedTerrain", schema, presetStr, Vector3.zero);
+            SceneManager.MoveGameObjectToScene(terrainGo, scene);
+            var terrain = terrainGo.GetComponent<Terrain>();
+            sb.AppendLine($"Terrain generated: preset={presetStr}, seed={terrainSeed}, size=({terrain.terrainData.size.x:F0},{terrain.terrainData.size.y:F0},{terrain.terrainData.size.z:F0})");
+
+            // ── 2. Roads ──
+            RoadNetworkPlanner.RoadNetworkResult roadsResult = null;
+            var hubsToken = args["roadHubs"] as JArray;
+            if (hubsToken != null && hubsToken.Count >= 2)
+            {
+                var hubs = new List<Vector3>();
+                foreach (var h in hubsToken)
+                    hubs.Add(new Vector3(h["x"].Value<float>(), h["y"].Value<float>(), h["z"].Value<float>()));
+
+                var roadSettings = new RoadGenSettings { seed = terrainSeed };
+                try
                 {
-                    "Plains" => TerrainGenerator.TerrainPreset.Plains,
-                    "Mountains" => TerrainGenerator.TerrainPreset.Mountains,
-                    "MountainValley" => TerrainGenerator.TerrainPreset.MountainValley,
-                    "Island" => TerrainGenerator.TerrainPreset.Island,
-                    _ => TerrainGenerator.TerrainPreset.Hills
+                    RoadNetworkPlanner.GenerateRoadSystem(scene, terrain, roadSettings, hubs, null, false, null);
+                    roadsResult = RoadNetworkPlanner.LastResult;
+                    sb.AppendLine($"Roads generated: {hubs.Count} hubs");
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"Roads failed: {ex.Message}");
+                }
+            }
+            else
+            {
+                // Fallback: generate automatic road network if not provided by AI
+                var roadSettings = new RoadGenSettings { seed = terrainSeed };
+                try
+                {
+                    RoadNetworkPlanner.GenerateRoadSystem(scene, terrain, roadSettings, null, null, false, null);
+                    roadsResult = RoadNetworkPlanner.LastResult;
+                    sb.AppendLine($"Roads generated (automatic): {roadSettings.hubCount} hubs");
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"Roads failed (automatic): {ex.Message}");
+                }
+            }
+
+            // ── 3. Settlements ──
+            var setToken = args["settlements"] as JArray;
+            if (setToken != null && setToken.Count > 0 && roadsResult != null)
+            {
+                var explicitSets = new List<SettlementNode>();
+                foreach (var s in setToken)
+                {
+                    explicitSets.Add(new SettlementNode
+                    {
+                        center = new Vector3(s["x"].Value<float>(), s["y"].Value<float>(), s["z"].Value<float>()),
+                        radius = s["radius"]?.Value<float>() ?? 140f,
+                        buildingCount = s["buildingCount"]?.Value<int>() ?? 120, // Increased default
+                        style = s["style"]?.Value<string>() ?? "Auto"
+                    });
+                }
+
+                var setSettings = new SettlementGenSettings 
+                { 
+                    seed = terrainSeed,
+                    maxSlopeDeg = 55f // Brute force slope tolerance
                 };
-                var terrGo = TerrainGenerator.CreateOrReplaceTerrain("GeneratedTerrain", preset, UnityEngine.Random.Range(0, int.MaxValue), Vector3.zero);
-                SceneManager.MoveGameObjectToScene(terrGo, scene);
-                terrain = terrGo.GetComponent<Terrain>();
+                try
+                {
+                    SettlementNetworkPlanner.GenerateSettlements(scene, terrain, roadsResult, setSettings, explicitSets, prompt, null, null);
+                    sb.AppendLine($"Settlements generated: {explicitSets.Count}");
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"Settlements failed: {ex.Message}");
+                }
             }
 
-            // 2) Create building objects
-            bool isMedieval = prompt.ToLowerInvariant().Contains("medieval") || prompt.ToLowerInvariant().Contains("village");
-            bool isModern = prompt.ToLowerInvariant().Contains("modern") || prompt.ToLowerInvariant().Contains("downtown") || prompt.ToLowerInvariant().Contains("city");
+            // Snap objects to terrain
+            GameGenerationExecutor.TerrainSnapper.SnapSceneObjectsToTerrain(scene, terrain);
 
-            for (int i = 0; i < buildingCount; i++)
-            {
-                string bName;
-                float w, h, d;
+            // Ensure camera and light
+            SceneDefaults.EnsureCameraAndLightIfNeeded(scene, true);
 
-                // Deterministic variety
-                float hash = Hash01ForCity(i, 42);
-                float hash2 = Hash01ForCity(i, 77);
-                float hash3 = Hash01ForCity(i, 113);
-
-                if (hash < 0.1f)
-                {
-                    bName = $"Tower_{i}";
-                    w = Mathf.Lerp(6f, 12f, hash2);
-                    h = Mathf.Lerp(25f, 55f, hash3);
-                    d = Mathf.Lerp(6f, 12f, Hash01ForCity(i, 201));
-                }
-                else if (hash < 0.3f)
-                {
-                    bName = $"Office_{i}";
-                    w = Mathf.Lerp(8f, 16f, hash2);
-                    h = Mathf.Lerp(14f, 30f, hash3);
-                    d = Mathf.Lerp(8f, 16f, Hash01ForCity(i, 201));
-                }
-                else if (hash < 0.55f)
-                {
-                    bName = isMedieval ? $"House_{i}" : $"Building_{i}";
-                    w = Mathf.Lerp(6f, 14f, hash2);
-                    h = Mathf.Lerp(8f, 18f, hash3);
-                    d = Mathf.Lerp(6f, 14f, Hash01ForCity(i, 201));
-                }
-                else if (hash < 0.75f)
-                {
-                    bName = $"Shop_{i}";
-                    w = Mathf.Lerp(5f, 10f, hash2);
-                    h = Mathf.Lerp(4f, 10f, hash3);
-                    d = Mathf.Lerp(5f, 10f, Hash01ForCity(i, 201));
-                }
-                else
-                {
-                    bName = $"House_{i}";
-                    w = Mathf.Lerp(5f, 9f, hash2);
-                    h = Mathf.Lerp(4f, 8f, hash3);
-                    d = Mathf.Lerp(5f, 9f, Hash01ForCity(i, 201));
-                }
-
-                var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                go.name = bName;
-                go.transform.localScale = new Vector3(w, h, d);
-                go.transform.position = Vector3.zero; // CitySceneArranger will place it
-                Undo.RegisterCreatedObjectUndo(go, "Create City Building");
-                SceneManager.MoveGameObjectToScene(go, scene);
-            }
-
-            // 3) Run CitySceneArranger to lay everything out
-            try
-            {
-                CitySceneArranger.ArrangeScene(scene, terrain, prompt);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[generateCity] CitySceneArranger failed: {ex.Message}");
-            }
-
-            // 4) Auto-frame
+            // Auto-select & frame terrain
+            Selection.activeGameObject = terrainGo;
             if (SceneView.lastActiveSceneView != null)
-            {
                 SceneView.lastActiveSceneView.FrameSelected();
-            }
 
-            return AgentToolResult.Ok($"Generated a city with {buildingCount} buildings on {terrainPresetStr} terrain. Roads, sidewalks, and building pads have been automatically created.");
-        }
-
-        private static AgentToolResult ToolArrangeCityScene(JObject args)
-        {
-            var scene = SceneManager.GetActiveScene();
-            if (!scene.IsValid())
-                return AgentToolResult.Fail("No active scene.");
-
-            var terrain = UnityEngine.Object.FindObjectOfType<Terrain>();
-            if (terrain == null)
-                return AgentToolResult.Fail("No terrain in scene. Use generateTerrain first.");
-
-            string prompt = args["prompt"]?.Value<string>() ?? "";
-
-            try
-            {
-                CitySceneArranger.ArrangeScene(scene, terrain, prompt);
-
-                if (SceneView.lastActiveSceneView != null)
-                    SceneView.lastActiveSceneView.FrameSelected();
-
-                return AgentToolResult.Ok("City scene arranged. Buildings placed near roads, terrain flattened under buildings, everything snapped to terrain surface.");
-            }
-            catch (Exception ex)
-            {
-                return AgentToolResult.Fail($"City arrangement failed: {ex.Message}");
-            }
+            return AgentToolResult.Ok(sb.ToString());
         }
 
         private static AgentToolResult ToolFocusSceneView(JObject args)

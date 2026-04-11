@@ -362,6 +362,7 @@ namespace Antimatter
         {
             int n = hubs.Count;
     
+            var rng = new System.Random(s.seed ^ 0x0DA7A);
             var all = new List<Edge>(n * (n - 1) / 2);
             for (int i = 0; i < n; i++)
             for (int j = i + 1; j < n; j++)
@@ -371,7 +372,9 @@ namespace Antimatter
                 float dist = Mathf.Sqrt(dx * dx + dy * dy);
     
                 float c = (grid.cost[hubs[i].grid.x, hubs[i].grid.y] + grid.cost[hubs[j].grid.x, hubs[j].grid.y]) * 0.5f;
-                float w = dist * c;
+                // Add "entanglement" jitter to avoid dull, perfect paths as per user request
+                float jitter = 0.8f + (float)rng.NextDouble() * 0.45f; // 0.8 to 1.25 range
+                float w = dist * c * jitter;
     
                 all.Add(new Edge { a = i, b = j, w = w });
             }
@@ -406,7 +409,6 @@ namespace Antimatter
                 if (chosen.Count == n - 1) break;
             }
     
-            var rng = new System.Random(s.seed ^ 0xBADC0DE);
             int added = 0;
             int guard = 0;
     
