@@ -72,6 +72,9 @@ namespace Antimatter
         public float seaLevel;              // 0..1
         public float valleyWidth;           // 0..1
         public float valleyDepth;           // 0..1
+
+        // Texturing / Environment
+        public string biome;                // e.g. "Desert", "Snow", "Lush"
     }
 
     /// <summary>

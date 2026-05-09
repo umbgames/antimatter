@@ -29,14 +29,13 @@ Located in `Assets/Antimatter/Editor`, this contains tools that run exclusively 
 ### 1. API Configuration
 Open the **Antimatter Settings** window (Tools -> Antimatter -> Settings) to configure your preferred AI provider (OpenAI, Groq, or Gemini) and enter your API Key.
 
-### 2. Terrain Generation
-To generate terrain procedurally:
-1.  Create a `TerrainAssetProfile` in your project folder.
-2.  Open the **Terrain Generator** window (Tools -> Antimatter -> Terrain -> Generator).
-3.  Assign your profile and click **Generate**.
+You can obtain your API keys from the following links:
+*   **OpenAI API Key**: [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+*   **Groq API Key**: [https://console.groq.com/keys](https://console.groq.com/keys)
+*   **Google Gemini API Key**: [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
 
-### 3. Agentic Workflow
+### 2. Agentic Workflow
 Open the **Agent Window** (Tools -> Antimatter -> Agent). You can give the agent high-level tasks like "Create a small fantasy village with a central square" or "Add a player character with a basic movement script". The agent will use its tools to inspect the scene, plan, and execute the changes for you.
 
 ---
-*Created by Antimatter developers for professional-grade Unity workflows.*
+*Created by UMB GAMES AND TECHNOLOGY LTD for professional-grade Unity workflows.*

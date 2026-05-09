@@ -41,7 +41,7 @@ namespace Antimatter
             get
             {
 #if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.OpenAIKey, "");
+                return EditorPrefs.GetString(AiPrefsKeys.OpenAIKey, "").Trim();
 #else
                 return "";
 #endif
@@ -49,7 +49,7 @@ namespace Antimatter
             set
             {
 #if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.OpenAIKey, value ?? "");
+                EditorPrefs.SetString(AiPrefsKeys.OpenAIKey, value?.Trim() ?? "");
 #endif
             }
         }
@@ -59,7 +59,7 @@ namespace Antimatter
             get
             {
 #if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.GroqKey, "");
+                return EditorPrefs.GetString(AiPrefsKeys.GroqKey, "").Trim();
 #else
                 return "";
 #endif
@@ -67,7 +67,7 @@ namespace Antimatter
             set
             {
 #if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.GroqKey, value ?? "");
+                EditorPrefs.SetString(AiPrefsKeys.GroqKey, value?.Trim() ?? "");
 #endif
             }
         }
@@ -77,7 +77,7 @@ namespace Antimatter
             get
             {
 #if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.GeminiKey, "");
+                return EditorPrefs.GetString(AiPrefsKeys.GeminiKey, "").Trim();
 #else
                 return "";
 #endif
@@ -85,7 +85,7 @@ namespace Antimatter
             set
             {
 #if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.GeminiKey, value ?? "");
+                EditorPrefs.SetString(AiPrefsKeys.GeminiKey, value?.Trim() ?? "");
 #endif
             }
         }
@@ -95,7 +95,7 @@ namespace Antimatter
             get
             {
 #if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.CustomUrl, "");
+                return EditorPrefs.GetString(AiPrefsKeys.CustomUrl, "").Trim();
 #else
                 return "";
 #endif
@@ -103,7 +103,7 @@ namespace Antimatter
             set
             {
 #if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.CustomUrl, value ?? "");
+                EditorPrefs.SetString(AiPrefsKeys.CustomUrl, value?.Trim() ?? "");
 #endif
             }
         }

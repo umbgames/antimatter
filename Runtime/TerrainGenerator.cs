@@ -35,6 +35,7 @@ namespace Antimatter
             public float seaLevel;
             public float valleyWidth;
             public float valleyDepth;
+            public string biome;
         }
 
         // ── Original preset-based entry (backward compatible) ──
@@ -78,6 +79,7 @@ namespace Antimatter
             if (s.seaLevel > 0f)           p.seaLevel = s.seaLevel;
             if (s.valleyWidth > 0f)        p.valleyWidth = s.valleyWidth;
             if (s.valleyDepth > 0f)        p.valleyDepth = s.valleyDepth;
+            if (!string.IsNullOrWhiteSpace(s.biome)) p.biome = s.biome;
 
             return p;
         }
@@ -145,27 +147,89 @@ namespace Antimatter
                 terrain.materialTemplate = AssetDatabase.GetBuiltinExtraResource<Material>("Default-Terrain-Standard.mat");
             }
 
-            var defaultLayer = new TerrainLayer();
-            var defaultTex = new Texture2D(4, 4, TextureFormat.RGBA32, false);
-            var greenColor = new Color(0.36f, 0.55f, 0.28f, 1f);
-            var pixels = new Color[16];
-            for (int i = 0; i < 16; i++) pixels[i] = greenColor;
-            defaultTex.SetPixels(pixels);
-            defaultTex.Apply();
+            string biomeStr = p.biome?.ToLowerInvariant() ?? "";
+            Color baseColor = new Color(0.36f, 0.55f, 0.28f, 1f); // Grass
+            Color steepColor = new Color(0.4f, 0.4f, 0.4f, 1f); // Rock
+            Color peakColor = new Color(0.9f, 0.9f, 0.95f, 1f); // Snow
+            
+            if (biomeStr.Contains("desert") || biomeStr.Contains("sand"))
+            {
+                baseColor = new Color(0.76f, 0.70f, 0.50f, 1f);
+                steepColor = new Color(0.65f, 0.50f, 0.39f, 1f);
+                peakColor = new Color(0.85f, 0.70f, 0.55f, 1f);
+            }
+            else if (biomeStr.Contains("snow") || biomeStr.Contains("arctic") || biomeStr.Contains("ice"))
+            {
+                baseColor = new Color(0.85f, 0.85f, 0.9f, 1f);
+                steepColor = new Color(0.3f, 0.3f, 0.35f, 1f);
+                peakColor = new Color(0.98f, 0.98f, 1f, 1f);
+            }
+            else if (biomeStr.Contains("red") || biomeStr.Contains("mars"))
+            {
+                baseColor = new Color(0.7f, 0.3f, 0.2f, 1f);
+                steepColor = new Color(0.4f, 0.15f, 0.1f, 1f);
+                peakColor = new Color(0.8f, 0.4f, 0.3f, 1f);
+            }
 
-            string layerPath = $"{folder}/{name}_DefaultLayer.asset";
-            string texPath = $"{folder}/{name}_DefaultTex.asset";
+            TerrainLayer MakeLayer(string layerName, Color c)
+            {
+                var l = new TerrainLayer();
+                var tex = new Texture2D(16, 16, TextureFormat.RGBA32, false);
+                var px = new Color[256];
+                for (int i = 0; i < 256; i++) px[i] = c;
+                tex.SetPixels(px);
+                tex.Apply();
+                
+                string lp = $"{folder}/{name}_{layerName}Layer.asset";
+                string tp = $"{folder}/{name}_{layerName}Tex.asset";
+                
+                var eL = AssetDatabase.LoadAssetAtPath<TerrainLayer>(lp);
+                if (eL != null) AssetDatabase.DeleteAsset(lp);
+                var eT = AssetDatabase.LoadAssetAtPath<Texture2D>(tp);
+                if (eT != null) AssetDatabase.DeleteAsset(tp);
+                
+                AssetDatabase.CreateAsset(tex, tp);
+                l.diffuseTexture = tex;
+                l.tileSize = new Vector2(20f, 20f);
+                AssetDatabase.CreateAsset(l, lp);
+                return l;
+            }
 
-            var existingLayer = AssetDatabase.LoadAssetAtPath<TerrainLayer>(layerPath);
-            if (existingLayer != null) AssetDatabase.DeleteAsset(layerPath);
-            var existingTex = AssetDatabase.LoadAssetAtPath<Texture2D>(texPath);
-            if (existingTex != null) AssetDatabase.DeleteAsset(texPath);
+            var baseLayer = MakeLayer("Base", baseColor);
+            var steepLayer = MakeLayer("Steep", steepColor);
+            var peakLayer = MakeLayer("Peak", peakColor);
 
-            AssetDatabase.CreateAsset(defaultTex, texPath);
-            defaultLayer.diffuseTexture = defaultTex;
-            defaultLayer.tileSize = new Vector2(10f, 10f);
-            AssetDatabase.CreateAsset(defaultLayer, layerPath);
-            data.terrainLayers = new TerrainLayer[] { defaultLayer };
+            data.terrainLayers = new TerrainLayer[] { baseLayer, steepLayer, peakLayer };
+
+            int alphaRes = data.alphamapResolution;
+            float[,,] splats = new float[alphaRes, alphaRes, 3];
+            for (int y = 0; y < alphaRes; y++)
+            {
+                for (int x = 0; x < alphaRes; x++)
+                {
+                    float normX = x / (float)(alphaRes - 1);
+                    float normY = y / (float)(alphaRes - 1);
+                    
+                    int hx = Mathf.Clamp(Mathf.RoundToInt(normX * (p.heightmapResolution - 1)), 0, p.heightmapResolution - 1);
+                    int hy = Mathf.Clamp(Mathf.RoundToInt(normY * (p.heightmapResolution - 1)), 0, p.heightmapResolution - 1);
+                    float h = data.GetHeight(hx, hy) / (float)p.heightY;
+                    float angle = data.GetSteepness(normX, normY);
+                    
+                    float steepness = Mathf.InverseLerp(25f, 45f, angle);
+                    
+                    float peakness = Mathf.InverseLerp(0.6f, 0.8f, h);
+                    if (steepness > 0) peakness *= (1f - steepness * 0.8f);
+
+                    float wPeak = peakness;
+                    float wSteep = steepness * (1f - wPeak);
+                    float wBase = 1f - (wPeak + wSteep);
+
+                    splats[y, x, 0] = Mathf.Max(0, wBase);
+                    splats[y, x, 1] = Mathf.Max(0, wSteep);
+                    splats[y, x, 2] = Mathf.Max(0, wPeak);
+                }
+            }
+            data.SetAlphamaps(0, 0, splats);
 
             terrain.Flush();
             EditorUtility.SetDirty(data);

@@ -33,9 +33,9 @@ namespace Antimatter
     
         public async Task<string> GeneratePlanAsync(string userPrompt, CancellationToken ct)
         {
-            string apiKey = Environment.GetEnvironmentVariable("GROQ_API_KEY");
+            string apiKey = AiProviderSettings.GroqKey;
             if (string.IsNullOrWhiteSpace(apiKey))
-                throw new Exception("Missing GROQ_API_KEY environment variable.");
+                throw new Exception("Missing Groq API Key in Settings.");
     
             string model = AiProviderSettings.GroqModel;
             ct.ThrowIfCancellationRequested();
@@ -179,9 +179,9 @@ namespace Antimatter
             List<AgentTool> tools,
             CancellationToken ct)
         {
-            string apiKey = Environment.GetEnvironmentVariable("GROQ_API_KEY");
+            string apiKey = AiProviderSettings.GroqKey;
             if (string.IsNullOrWhiteSpace(apiKey))
-                throw new Exception("Missing GROQ_API_KEY environment variable.");
+                throw new Exception("Missing Groq API Key in Settings.");
     
             string model = AiProviderSettings.GroqModel;
             ct.ThrowIfCancellationRequested();

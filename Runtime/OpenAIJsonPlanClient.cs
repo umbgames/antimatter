@@ -12,7 +12,6 @@ namespace Antimatter
     
     public static class OpenAIJsonPlanClient
     {
-        private const string PlanEndpoint = "https://api.openai.com/v1/responses";
         private const string ChatEndpoint = "https://api.openai.com/v1/chat/completions";
     
         private static HttpClient _http;
@@ -32,22 +31,21 @@ namespace Antimatter
             }
         }
     
-        // ──────────────────── LEGACY PLAN GENERATION ────────────────────
+        // ──────────────────── PLAN GENERATION (STRUCTURED OUTPUTS) ────────────────────
     
         public static async Task<string> GeneratePlanAsync(string prompt, CancellationToken cancellationToken)
         {
-            string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+            string apiKey = AiProviderSettings.OpenAIKey;
             if (string.IsNullOrWhiteSpace(apiKey))
-                throw new Exception("Missing OPENAI_API_KEY environment variable.");
+                throw new Exception("Missing OpenAI API Key in Settings.");
     
             string model = AiProviderSettings.OpenAIModel;
-    
             cancellationToken.ThrowIfCancellationRequested();
     
-            string system = BuildSystemPrompt();
-            string body = BuildRequestBody(model, system, prompt);
+            string system = OpenAIJsonPlanClientSchema.SystemPrompt;
+            string body = BuildStructuredOutputRequestBody(model, system, prompt);
     
-            using var request = new HttpRequestMessage(HttpMethod.Post, PlanEndpoint);
+            using var request = new HttpRequestMessage(HttpMethod.Post, ChatEndpoint);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             request.Content = new StringContent(body, Encoding.UTF8, "application/json");
     
@@ -59,10 +57,10 @@ namespace Antimatter
             if (!resp.IsSuccessStatusCode)
                 throw new Exception($"OpenAI error {(int)resp.StatusCode}: {respText}");
     
-            string planJson = ExtractPlanJsonFromResponsesPayload(respText);
+            string planJson = ExtractPlanJsonFromChatResponse(respText);
     
             if (string.IsNullOrWhiteSpace(planJson))
-                throw new Exception("Model response did not contain a JSON plan.");
+                throw new Exception("Model response did not contain a valid JSON plan.");
     
             return planJson.Trim();
         }
@@ -74,9 +72,9 @@ namespace Antimatter
             List<AgentTool> tools,
             CancellationToken ct)
         {
-            string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+            string apiKey = AiProviderSettings.OpenAIKey;
             if (string.IsNullOrWhiteSpace(apiKey))
-                throw new Exception("Missing OPENAI_API_KEY environment variable.");
+                throw new Exception("Missing OpenAI API Key in Settings.");
     
             string model = AiProviderSettings.OpenAIModel;
             ct.ThrowIfCancellationRequested();
@@ -173,202 +171,37 @@ namespace Antimatter
     
         // ──────────────────── HELPERS ────────────────────
     
-        private static string ExtractPlanJsonFromResponsesPayload(string responsesPayload)
+        private static string ExtractPlanJsonFromChatResponse(string respText)
         {
-            var root = JToken.Parse(responsesPayload);
+            var root = JToken.Parse(respText);
+            var content = root["choices"]?[0]?["message"]?["content"]?.Value<string>();
+            return content;
+        }
     
-            var outputText = root["output_text"]?.Value<string>();
-            if (!string.IsNullOrWhiteSpace(outputText))
-                return outputText;
-    
-            var output = root["output"] as JArray;
-            if (output == null) return null;
-    
-            var sb = new StringBuilder();
-            foreach (var item in output)
+        private static string BuildStructuredOutputRequestBody(string model, string system, string userPrompt)
+        {
+            var body = new JObject
             {
-                var content = item["content"] as JArray;
-                if (content == null) continue;
-    
-                foreach (var c in content)
+                ["model"] = model,
+                ["messages"] = new JArray
                 {
-                    var text = c["text"]?.Value<string>();
-                    if (!string.IsNullOrWhiteSpace(text))
-                        sb.Append(text);
-                }
-            }
+                    new JObject { ["role"] = "system", ["content"] = system },
+                    new JObject { ["role"] = "user", ["content"] = userPrompt }
+                },
+                ["response_format"] = new JObject
+                {
+                    ["type"] = "json_schema",
+                    ["json_schema"] = new JObject
+                    {
+                        ["name"] = "unity_game_plan",
+                        ["strict"] = true,
+                        ["schema"] = JToken.Parse(OpenAIJsonPlanClientSchema.SchemaJson)
+                    }
+                },
+                ["temperature"] = 0
+            };
     
-            var combined = sb.ToString();
-            return string.IsNullOrWhiteSpace(combined) ? null : combined;
-        }
-    
-        private static string BuildSystemPrompt()
-        {
-            return
-    @"You are a Unity game-generation planner.
-    Return ONLY valid JSON that matches the provided JSON Schema. No markdown. No comments. No extra keys.
-    
-    Constraints:
-    - AI must not control Unity. Only produce a deterministic JSON plan.
-    - Use only primitive placeholder objects: Cube, Sphere, Capsule.
-    - Every object must have a unique id.
-    - Scripts must be valid C# MonoBehaviour code with NO UnityEditor usage.
-    - Prefer simple, stable runtime logic (SceneManager ok).
-    - Do not assume tags/layers exist unless you also include creation steps (avoid requiring tags).
-    - Properties must be typed using entries: { name, type, floatValue/intValue/boolValue/stringValue }.
-    - When editing, reuse existing object ids. Only introduce new ids for new objects.
-    ";
-        }
-    
-        private static string BuildRequestBody(string model, string system, string userPrompt)
-        {
-            string sysEsc = JsonEscape(system);
-            string userEsc = JsonEscape(userPrompt);
-    
-            return $@"
-    {{
-      ""model"": ""{model}"",
-      ""input"": [
-        {{
-          ""role"": ""system"",
-          ""content"": [
-            {{ ""type"": ""input_text"", ""text"": ""{sysEsc}"" }}
-          ]
-        }},
-        {{
-          ""role"": ""user"",
-          ""content"": [
-            {{ ""type"": ""input_text"", ""text"": ""{userEsc}"" }}
-          ]
-        }}
-      ],
-      ""text"": {{
-        ""format"": {{
-          ""type"": ""json_schema"",
-          ""name"": ""unity_game_plan"",
-          ""strict"": true,
-          ""schema"": {GamePlanJsonSchema()}
-        }}
-      }}
-    }}".Trim();
-        }
-    
-        private static string GamePlanJsonSchema()
-        {
-            return @"
-    {
-      ""type"": ""object"",
-      ""additionalProperties"": false,
-      ""required"": [""version"", ""planExplanation"", ""planSuggestions"", ""scenes"", ""scripts"", ""flow""],
-      ""properties"": {
-        ""version"": { ""type"": ""string"" },
-        ""planExplanation"": { ""type"": ""string"" },
-        ""planSuggestions"": { ""type"": ""string"" },
-        ""scenes"": {
-          ""type"": ""array"",
-          ""minItems"": 1,
-          ""items"": { ""$ref"": ""#/definitions/SceneDefinition"" }
-        },
-        ""scripts"": {
-          ""type"": ""array"",
-          ""items"": { ""$ref"": ""#/definitions/ScriptDefinition"" }
-        },
-        ""flow"": { ""$ref"": ""#/definitions/FlowDefinition"" }
-      },
-      ""definitions"": {
-        ""Vector3"": {
-          ""type"": ""object"",
-          ""additionalProperties"": false,
-          ""required"": [""x"", ""y"", ""z""],
-          ""properties"": {
-            ""x"": { ""type"": ""number"" },
-            ""y"": { ""type"": ""number"" },
-            ""z"": { ""type"": ""number"" }
-          }
-        },
-        ""PropertyValue"": {
-          ""type"": ""object"",
-          ""additionalProperties"": false,
-          ""required"": [""name"", ""type"", ""floatValue"", ""intValue"", ""boolValue"", ""stringValue""],
-          ""properties"": {
-            ""name"": { ""type"": ""string"" },
-            ""type"": { ""type"": ""string"", ""enum"": [""float"", ""int"", ""bool"", ""string""] },
-            ""floatValue"": { ""type"": ""number"" },
-            ""intValue"": { ""type"": ""integer"" },
-            ""boolValue"": { ""type"": ""boolean"" },
-            ""stringValue"": { ""type"": ""string"" }
-          }
-        },
-        ""ComponentDefinition"": {
-          ""type"": ""object"",
-          ""additionalProperties"": false,
-          ""required"": [""script"", ""properties""],
-          ""properties"": {
-            ""script"": { ""type"": ""string"" },
-            ""properties"": {
-              ""type"": ""array"",
-              ""items"": { ""$ref"": ""#/definitions/PropertyValue"" }
-            }
-          }
-        },
-        ""ObjectDefinition"": {
-          ""type"": ""object"",
-          ""additionalProperties"": false,
-          ""required"": [""id"", ""type"", ""position"", ""scale"", ""components""],
-          ""properties"": {
-            ""id"": { ""type"": ""string"" },
-            ""type"": { ""type"": ""string"", ""enum"": [""Cube"", ""Sphere"", ""Capsule""] },
-            ""position"": { ""$ref"": ""#/definitions/Vector3"" },
-            ""scale"": { ""$ref"": ""#/definitions/Vector3"" },
-            ""components"": {
-              ""type"": ""array"",
-              ""items"": { ""$ref"": ""#/definitions/ComponentDefinition"" }
-            }
-          }
-        },
-        ""SceneDefinition"": {
-          ""type"": ""object"",
-          ""additionalProperties"": false,
-          ""required"": [""name"", ""objects""],
-          ""properties"": {
-            ""name"": { ""type"": ""string"" },
-            ""objects"": {
-              ""type"": ""array"",
-              ""items"": { ""$ref"": ""#/definitions/ObjectDefinition"" }
-            }
-          }
-        },
-        ""ScriptDefinition"": {
-          ""type"": ""object"",
-          ""additionalProperties"": false,
-          ""required"": [""name"", ""path"", ""code""],
-          ""properties"": {
-            ""name"": { ""type"": ""string"" },
-            ""path"": { ""type"": ""string"" },
-            ""code"": { ""type"": ""string"" }
-          }
-        },
-        ""FlowDefinition"": {
-          ""type"": ""object"",
-          ""additionalProperties"": false,
-          ""required"": [""restartKey"", ""nextSceneOnTrigger""],
-          ""properties"": {
-            ""restartKey"": { ""type"": ""string"" },
-            ""nextSceneOnTrigger"": { ""type"": ""boolean"" }
-          }
-        }
-      }
-    }
-    ".Trim();
-        }
-    
-        private static string JsonEscape(string s)
-        {
-            return s
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\r", "\\r")
-                .Replace("\n", "\\n");
+            return body.ToString();
         }
     }
 }

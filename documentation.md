@@ -40,7 +40,7 @@ The future of Antimatter is bright! Some of the features we're currently working
 
 ### Community & Support
 
-*   **Discord/Slack**: [Link to Community]
-*   **Documentation Site**: [Link to External Docs]
+*   **Patreon**: [https://www.patreon.com/umbgames]
+*   **Documentation Site**: [https://umbtechnologies.com]
 
 Feel free to reach out with any questions or ideas. Let's build the future of agentic game development together!

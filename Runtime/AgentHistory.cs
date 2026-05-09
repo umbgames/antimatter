@@ -78,6 +78,17 @@ namespace Antimatter
                 CreateNewSession();
         }
 
+        public static void DeleteAllSessions()
+        {
+            if (System.IO.Directory.Exists(BaseSessionsPath))
+            {
+                var files = System.IO.Directory.GetFiles(BaseSessionsPath, "*.json");
+                foreach (var f in files)
+                    System.IO.File.Delete(f);
+            }
+            CreateNewSession();
+        }
+
         public static List<AgentMessage> Load()
         {
             return LoadSession(CurrentSessionId);

@@ -31,12 +31,11 @@ namespace Antimatter
     
         public async Task<string> GeneratePlanAsync(string userPrompt, CancellationToken ct)
         {
-            string apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+            string apiKey = AiProviderSettings.GeminiKey;
             if (string.IsNullOrWhiteSpace(apiKey))
-                throw new Exception("Missing GEMINI_API_KEY environment variable.");
+                throw new Exception("Missing Gemini API Key in Settings.");
     
             string model = AiProviderSettings.GeminiModel;
-    
             ct.ThrowIfCancellationRequested();
     
             string system = OpenAIJsonPlanClientSchema.SystemPrompt;
@@ -45,22 +44,19 @@ namespace Antimatter
             {
                 ["systemInstruction"] = new JObject
                 {
-                    ["parts"] = new JArray(
-                        new JObject { ["text"] = system }
-                    )
+                    ["parts"] = new JArray(new JObject { ["text"] = system })
                 },
                 ["contents"] = new JArray(
                     new JObject
                     {
                         ["role"] = "user",
-                        ["parts"] = new JArray(
-                            new JObject { ["text"] = userPrompt }
-                        )
+                        ["parts"] = new JArray(new JObject { ["text"] = userPrompt })
                     }
                 ),
                 ["generationConfig"] = new JObject
                 {
-                    ["responseMimeType"] = "application/json"
+                    ["responseMimeType"] = "application/json",
+                    ["responseSchema"] = JToken.Parse(OpenAIJsonPlanClientSchema.SchemaJson)
                 }
             }.ToString();
     
@@ -91,9 +87,9 @@ namespace Antimatter
             List<AgentTool> tools,
             CancellationToken ct)
         {
-            string apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+            string apiKey = AiProviderSettings.GeminiKey;
             if (string.IsNullOrWhiteSpace(apiKey))
-                throw new Exception("Missing GEMINI_API_KEY environment variable.");
+                throw new Exception("Missing Gemini API Key in Settings.");
     
             string model = AiProviderSettings.GeminiModel;
             ct.ThrowIfCancellationRequested();
