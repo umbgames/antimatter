@@ -1,0 +1,152 @@
+Generate an extreme alpine terrain with very steep mountains and narrow valleys.
+Roads should almost never climb directly uphill and must rely heavily on tunnels to pass through mountain ranges.
+Create a dense, interconnected road network that still feels realistic and drivable.
+
+
+Generate a mountainous terrain with valleys. Create a road network across the whole map with bridges across deep valleys and tunnels through ridges. Then generate settlements along the road network: a few towns at major hubs and smaller villages along roads, with buildings grouped in clusters.
+
+Generate a modern city with grid streets, downtown blocks, highrises and commercial areas near the main hubs.”
+
+Generate a medieval town with a market square, ring streets, and a stone wall around the settlement.”
+
+Generate suburban neighborhoods with cul-de-sacs, small houses, and yards near roads.”
+
+Generate an extreme alpine terrain with very steep mountains and narrow valleys. Create a road network across the whole map with bridges across deep valleys
+settlements along the road network: a modern city with grid streets, downtown blocks, highrises and commercial areas near the main hubs.
+
+Generate an extreme alpine terrain.Create a road network across the whole map with bridges across deep valleys
+settlements along the road network: a modern city with grid streets, downtown blocks, highrises and commercial areas near the main hubs.
+
+
+LEVELGEN: Build a small playable FPS arena (compact, not open world).
+
+GOAL:
+- A simple FPS test level where the player survives enemy waves.
+
+LEVEL LAYOUT (small arena):
+- Create an enclosed arena: floor + 4 perimeter walls + ceiling optional.
+- Add 2 lanes and a central fight area.
+- Place 15–30 cover objects (crates, low walls, pillars) with strategic spacing:
+  - Provide cover near lanes and mid, but keep clear navigation routes.
+  - Avoid blocking the player completely; leave at least 2 flanking routes.
+- Add a “KillZone” boundary (invisible colliders) so enemies/player can’t leave the arena.
+
+PLAYER:
+- Create a Player object with FPS controller + camera.
+- Put the player spawn at one side of the arena.
+
+ENEMY WAVES:
+- Implement enemy wave system:
+  - Wave 1: 5 enemies
+  - Wave 2: 8 enemies
+  - Wave 3: 12 enemies
+  - Then repeat with +3 enemies each wave (cap at 25).
+- Enemies spawn from 3–5 EnemySpawnPoints placed around the arena edges (not near player spawn).
+- Add a WaveManager script that:
+  - Spawns the wave
+  - Tracks alive enemies
+  - Starts next wave after all enemies are dead + a 5s break
+  - Displays current wave and enemies remaining using simple OnGUI text.
+- Add an EnemyAI script:
+  - Enemies move toward the player and attack on contact or at short range.
+  - Simple movement is fine (no fancy pathfinding required).
+- Add a Health script for player and enemies.
+- Add a basic weapon script for player (hitscan or projectile) so the player can kill enemies.
+
+IMPORTANT PLAN REQUIREMENTS:
+- The JSON MUST include scene objects for: Player, WaveManager, EnemySpawnPoints, Cover objects, Arena bounds (floor/walls), and optionally lighting.
+- Do NOT only generate scripts — also create and place the objects that use them.
+- Use simple primitives (cubes/capsules) and built-in colliders. Keep it lightweight.
+
+OUTPUT:
+- Return a valid game plan JSON that passes the executor validation.
+
+
+
+
+Make EXACTLY ONE scene named "FPS_Waves".
+Include AT LEAST these objects by id:
+- "ArenaFloor"
+- "ArenaWall_N", "ArenaWall_S", "ArenaWall_E", "ArenaWall_W"
+- "Player"
+- "WaveManager"
+- "EnemySpawn_01", "EnemySpawn_02", "EnemySpawn_03", "EnemySpawn_04"
+- "Cover_01" through "Cover_20"
+
+Attach scripts:
+- Player: PlayerController, Health, Weapon
+- WaveManager: WaveManager
+- Enemies: EnemyAI, Health
+WaveManager must spawn enemies at EnemySpawn_* points.
+
+Create a small playable FPS arena level with enemy waves.
+
+Hard requirement (LevelGen markers):
+In the scene objects list, include these marker objects exactly by id (case-sensitive), each as an Empty object, with position filled, and scale filled where required:
+
+Required markers:
+
+LM_ArenaCenter (Empty) — position = arena center (y=0)
+
+LM_ArenaSize (Empty) — scale.x = arena width, scale.z = arena length (y can be 1)
+
+LM_PlayerSpawn (Empty) — position where player starts
+
+LM_MidHotspot (Empty) — position for mid combat hotspot
+
+LM_LaneA_Entry (Empty)
+
+LM_LaneA_Exit (Empty)
+
+LM_LaneB_Entry (Empty)
+
+LM_LaneB_Exit (Empty)
+
+LM_EnemySpawn_01 (Empty)
+
+LM_EnemySpawn_02 (Empty)
+
+LM_EnemySpawn_03 (Empty)
+
+Layout rules for marker placement (must follow):
+
+Set arena size to about 60 x 60 (LM_ArenaSize scale.x=60, scale.z=60).
+
+Put LM_ArenaCenter at (0,0,0).
+
+Put LM_PlayerSpawn near one edge inside arena, e.g. (0,0,-22).
+
+Put LM_MidHotspot near center, e.g. (0,0,0) or slightly offset.
+
+Create two lanes across arena:
+
+Lane A left side: Entry at (-22,0,-10), Exit at (-22,0,10)
+
+Lane B right side: Entry at (22,0,-10), Exit at (22,0,10)
+
+Place enemy spawns around perimeter but inside bounds:
+
+EnemySpawn_01 at (-18,0,22)
+
+EnemySpawn_02 at (18,0,22)
+
+EnemySpawn_03 at (0,0,24)
+
+Important:
+
+Do NOT manually place walls/cover/props in the plan for this level. Only place the markers + the minimal gameplay objects (Player, camera/light if needed).
+
+The actual geometry (floor, bounds, cover, lanes) will be generated by LevelLayoutGenerator.BuildFromMarkers() after build.
+
+Gameplay requirement:
+Add scripts for:
+
+Player controller (WASD + mouse look + shoot)
+
+Enemy simple AI (move toward player, take damage, die)
+
+Wave spawner that uses LM_EnemySpawn_01..03 positions and spawns 3 waves increasing count each wave, with a short break between waves.
+
+Return a valid plan JSON with the marker objects included in the scene.
+
+

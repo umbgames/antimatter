@@ -475,7 +475,7 @@ namespace Antimatter
                 "createScene" or "runFullPlan" or "attachScript" or "generateTerrain" or
                 "setObjectActive" or "generateRoadNetwork" or "generateSettlements" or
                 "generateCity" or "generateWorld" or "arrangeCityScene" or "focusSceneView" or
-                "generateCanvasUI" or "enterPlayMode" or "exitPlayMode" => true,
+                "generateCanvasUI" or "createParticleSystem" or "enterPlayMode" or "exitPlayMode" => true,
                 _ => false
             };
         }

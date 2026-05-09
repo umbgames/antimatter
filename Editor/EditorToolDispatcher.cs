@@ -32,6 +32,7 @@ namespace Antimatter
                 "modifytransform" => "Updating transform...",
                 "addcomponent" => "Adding component...",
                 "writescript" => "Writing C# script...",
+                "writeshader" => "Writing Shader...",
                 "deletescript" => "Deleting script...",
                 "creatematerial" => "Creating material...",
                 "readconsoleerrors" => "Checking console for errors...",
@@ -282,6 +283,22 @@ namespace Antimatter
                 ParameterSchema = @"{""type"":""object"",""required"":[""path""],""properties"":{""path"":{""type"":""string""}},""additionalProperties"":false}",
                 Execute = ToolDeleteScript
             });
+
+            Register(new AgentTool
+            {
+                Name = "writeShader",
+                Description = "Writes a Unity Shader file (.shader or .hlsl).",
+                ParameterSchema = @"{
+                    ""type"":""object"",
+                    ""required"":[""path"",""code""],
+                    ""properties"":{
+                        ""path"":{""type"":""string"",""description"":""e.g. Assets/Generated/MyShader.shader""},
+                        ""code"":{""type"":""string"",""description"":""Full Shader/HLSL code content""}
+                    },
+                    ""additionalProperties"":false
+                }",
+                Execute = ToolWriteShader
+            });
     
             Register(new AgentTool
             {
@@ -371,7 +388,8 @@ namespace Antimatter
                         ""erosionPasses"":{""type"":""number"",""description"":""Smoothing passes 0..50""},
                         ""seaLevel"":{""type"":""number"",""description"":""Sea level 0..1""},
                         ""valleyWidth"":{""type"":""number"",""description"":""Valley width 0..1""},
-                        ""valleyDepth"":{""type"":""number"",""description"":""Valley depth 0..1""}
+                        ""valleyDepth"":{""type"":""number"",""description"":""Valley depth 0..1""},
+                        ""biome"":{""type"":""string"",""description"":""e.g. 'Desert', 'Snow', 'Lush'""}
                     },
                     ""additionalProperties"":false
                 }",
@@ -514,6 +532,7 @@ namespace Antimatter
                         ""baseFrequency"":{""type"":""number""},
                         ""ridgeStrength"":{""type"":""number""},
                         ""erosionPasses"":{""type"":""number""},
+                        ""biome"":{""type"":""string"",""description"":""e.g. 'Desert', 'Snow', 'Lush'""},
                         ""roadHubs"":{
                             ""type"":""array"",
                             ""items"":{
@@ -540,6 +559,26 @@ namespace Antimatter
                     ""additionalProperties"":false
                 }",
                 Execute = ToolGenerateWorld
+            });
+
+            Register(new AgentTool
+            {
+                Name = "createParticleSystem",
+                Description = "Spawns a Particle System. Use this to create water splashes, fire, smoke, sparks, etc.",
+                ParameterSchema = @"{
+                    ""type"":""object"",
+                    ""required"":[""id"", ""style""],
+                    ""properties"":{
+                        ""id"":{""type"":""string""},
+                        ""x"":{""type"":""number""},
+                        ""y"":{""type"":""number""},
+                        ""z"":{""type"":""number""},
+                        ""style"":{""type"":""string"",""enum"":[""Fire"",""Smoke"",""WaterSplash"",""Magic"",""Sparks""]},
+                        ""colorHex"":{""type"":""string"",""description"":""e.g. #FF0000""}
+                    },
+                    ""additionalProperties"":false
+                }",
+                Execute = ToolCreateParticleSystem
             });
         }
     
@@ -728,6 +767,26 @@ namespace Antimatter
             AssetDatabase.DeleteAsset(path);
             return AgentToolResult.Ok($"Deleted: {path}");
         }
+
+        private static AgentToolResult ToolWriteShader(JObject args)
+        {
+            string path = args["path"]?.Value<string>();
+            string code = args["code"]?.Value<string>();
+    
+            if (string.IsNullOrWhiteSpace(path) || !path.StartsWith("Assets/") || (!path.EndsWith(".shader") && !path.EndsWith(".hlsl")))
+                return AgentToolResult.Fail("Invalid path. Must start with Assets/ and end with .shader or .hlsl");
+            if (string.IsNullOrWhiteSpace(code))
+                return AgentToolResult.Fail("Code is empty.");
+    
+            string dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+    
+            File.WriteAllText(path, code, System.Text.Encoding.UTF8);
+            AssetDatabase.ImportAsset(path);
+    
+            return AgentToolResult.Ok($"Wrote shader successfully to {path}.");
+        }
     
         private static AgentToolResult ToolCreateMaterial(JObject args)
         {
@@ -894,7 +953,8 @@ namespace Antimatter
                 erosionPasses = args["erosionPasses"]?.Value<float>() ?? 0f,
                 seaLevel = args["seaLevel"]?.Value<float>() ?? 0f,
                 valleyWidth = args["valleyWidth"]?.Value<float>() ?? 0f,
-                valleyDepth = args["valleyDepth"]?.Value<float>() ?? 0f
+                valleyDepth = args["valleyDepth"]?.Value<float>() ?? 0f,
+                biome = args["biome"]?.Value<string>()
             };
 
             var scene = SceneManager.GetActiveScene();
@@ -1030,7 +1090,8 @@ namespace Antimatter
                 persistence = args["persistence"]?.Value<float>() ?? 0f,
                 baseFrequency = args["baseFrequency"]?.Value<float>() ?? 0f,
                 ridgeStrength = args["ridgeStrength"]?.Value<float>() ?? 0f,
-                erosionPasses = args["erosionPasses"]?.Value<float>() ?? 0f
+                erosionPasses = args["erosionPasses"]?.Value<float>() ?? 0f,
+                biome = args["biome"]?.Value<string>()
             };
 
             var terrainGo = TerrainGenerator.CreateOrReplaceTerrain("GeneratedTerrain", schema, presetStr, Vector3.zero);
@@ -1080,13 +1141,17 @@ namespace Antimatter
             if (setToken != null && setToken.Count > 0 && roadsResult != null)
             {
                 var explicitSets = new List<SettlementNode>();
+                
+                float dynamicRadius = terrain.terrainData.size.x * 0.12f; // e.g. 12% of terrain width
+                float dynamicBuildings = (terrain.terrainData.size.x * terrain.terrainData.size.z) / 4000f;
+
                 foreach (var s in setToken)
                 {
                     explicitSets.Add(new SettlementNode
                     {
                         center = new Vector3(s["x"].Value<float>(), s["y"].Value<float>(), s["z"].Value<float>()),
-                        radius = s["radius"]?.Value<float>() ?? 140f,
-                        buildingCount = s["buildingCount"]?.Value<int>() ?? 120, // Increased default
+                        radius = s["radius"]?.Value<float>() > 0 ? s["radius"].Value<float>() : dynamicRadius,
+                        buildingCount = s["buildingCount"]?.Value<int>() > 0 ? s["buildingCount"].Value<int>() : (int)dynamicBuildings,
                         style = s["style"]?.Value<string>() ?? "Auto"
                     });
                 }
@@ -1229,6 +1294,86 @@ namespace Antimatter
                     break;
             }
             return go;
+        }
+
+        private static AgentToolResult ToolCreateParticleSystem(JObject args)
+        {
+            string id = args["id"]?.Value<string>();
+            if (string.IsNullOrEmpty(id)) return AgentToolResult.Fail("id is required.");
+
+            float x = args["x"]?.Value<float>() ?? 0f;
+            float y = args["y"]?.Value<float>() ?? 0f;
+            float z = args["z"]?.Value<float>() ?? 0f;
+            string style = args["style"]?.Value<string>() ?? "Smoke";
+            string colorHex = args["colorHex"]?.Value<string>() ?? "#FFFFFF";
+
+            GameObject go = new GameObject(id);
+            go.transform.position = new Vector3(x, y, z);
+            var ps = go.AddComponent<ParticleSystem>();
+            var renderer = go.GetComponent<ParticleSystemRenderer>();
+            renderer.material = new Material(Shader.Find("Particles/Standard Unlit"));
+
+            var main = ps.main;
+            var emission = ps.emission;
+            var shape = ps.shape;
+
+            if (ColorUtility.TryParseHtmlString(colorHex, out Color c))
+            {
+                main.startColor = c;
+            }
+
+            switch (style)
+            {
+                case "Fire":
+                    main.startSpeed = 2f;
+                    main.startSize = 1.5f;
+                    main.startLifetime = 1.5f;
+                    emission.rateOverTime = 20;
+                    shape.shapeType = ParticleSystemShapeType.Cone;
+                    shape.angle = 15;
+                    main.startColor = new Color(1f, 0.5f, 0f, 0.8f);
+                    break;
+                case "Smoke":
+                    main.startSpeed = 1f;
+                    main.startSize = new ParticleSystem.MinMaxCurve(1f, 3f);
+                    main.startLifetime = 3f;
+                    emission.rateOverTime = 10;
+                    shape.shapeType = ParticleSystemShapeType.Cone;
+                    shape.angle = 25;
+                    main.startColor = new Color(0.5f, 0.5f, 0.5f, 0.5f);
+                    break;
+                case "WaterSplash":
+                    main.startSpeed = 5f;
+                    main.startSize = 0.2f;
+                    main.startLifetime = 0.8f;
+                    main.gravityModifier = 1f;
+                    emission.rateOverTime = 50;
+                    shape.shapeType = ParticleSystemShapeType.Cone;
+                    shape.angle = 30;
+                    main.startColor = new Color(0.7f, 0.9f, 1f, 0.8f);
+                    break;
+                case "Magic":
+                    main.startSpeed = 0.5f;
+                    main.startSize = 0.5f;
+                    main.startLifetime = 2f;
+                    emission.rateOverTime = 30;
+                    shape.shapeType = ParticleSystemShapeType.Sphere;
+                    shape.radius = 2f;
+                    break;
+                case "Sparks":
+                    main.startSpeed = 10f;
+                    main.startSize = 0.1f;
+                    main.startLifetime = 0.5f;
+                    main.gravityModifier = 1.5f;
+                    emission.rateOverTime = 0;
+                    emission.SetBursts(new ParticleSystem.Burst[] { new ParticleSystem.Burst(0f, 30) });
+                    shape.shapeType = ParticleSystemShapeType.Hemisphere;
+                    main.startColor = new Color(1f, 0.8f, 0.2f, 1f);
+                    break;
+            }
+
+            Undo.RegisterCreatedObjectUndo(go, $"Create ParticleSystem {id}");
+            return AgentToolResult.Ok($"Created {style} particle system at {x}, {y}, {z}");
         }
     }
 }

@@ -65,7 +65,7 @@ namespace Antimatter
         [MenuItem("Tools/Antimatter")]
         public static void Open()
         {
-            var w = GetWindow<AgentWindow>("Antimatter");
+            var w = GetWindow<AgentWindow>("ɅNTIMɅTTΞR");
             w.minSize = new Vector2(420, 500);
         }
     
@@ -79,6 +79,8 @@ namespace Antimatter
             _orchestrator.OnError += HandleError;
     
             EditorSceneManager.sceneOpened += OnSceneOpened;
+            VoiceRecorder.OnTranscriptionUpdated += HandleTranscriptionUpdated;
+            VoiceRecorder.OnTranscriptionFinished += HandleTranscriptionFinished;
     
             // Load persistent history
             var saved = AgentHistory.Load();
@@ -111,6 +113,8 @@ namespace Antimatter
         {
             _orchestrator?.Cancel();
             EditorSceneManager.sceneOpened -= OnSceneOpened;
+            VoiceRecorder.OnTranscriptionUpdated -= HandleTranscriptionUpdated;
+            VoiceRecorder.OnTranscriptionFinished -= HandleTranscriptionFinished;
     
             // Save history
             if (_orchestrator != null)
@@ -128,36 +132,57 @@ namespace Antimatter
             }
         }
     
+        private Texture2D _userBg;
+        private Texture2D _toolBg;
+
+        private Texture2D MakeTex(int width, int height, Color col)
+        {
+            Color[] pix = new Color[width * height];
+            for (int i = 0; i < pix.Length; ++i) pix[i] = col;
+            Texture2D result = new Texture2D(width, height);
+            result.hideFlags = HideFlags.HideAndDontSave;
+            result.SetPixels(pix);
+            result.Apply();
+            return result;
+        }
+
         private void InitStyles()
         {
             if (_stylesInitialized) return;
-    
-            _userBubbleStyle = new GUIStyle(EditorStyles.helpBox)
+            
+            _userBg = MakeTex(2, 2, new Color(0.18f, 0.18f, 0.18f, 1f));
+            _toolBg = MakeTex(2, 2, new Color(0.12f, 0.14f, 0.16f, 1f));
+            Texture2D inputBg = MakeTex(2, 2, new Color(0.12f, 0.12f, 0.12f, 1f));
+
+            _userBubbleStyle = new GUIStyle()
             {
                 richText = true,
                 wordWrap = true,
-                padding = new RectOffset(10, 10, 8, 8),
+                padding = new RectOffset(12, 12, 10, 10),
                 margin = new RectOffset(40, 8, 4, 4),
                 fontSize = 12
             };
+            _userBubbleStyle.normal.background = _userBg;
+            _userBubbleStyle.normal.textColor = Color.white;
     
-            _assistantBubbleStyle = new GUIStyle(EditorStyles.helpBox)
+            _assistantBubbleStyle = new GUIStyle()
             {
                 richText = true,
                 wordWrap = true,
-                padding = new RectOffset(10, 10, 8, 8),
+                padding = new RectOffset(4, 4, 10, 10),
                 margin = new RectOffset(8, 40, 4, 4),
                 fontSize = 12
             };
     
-            _toolBubbleStyle = new GUIStyle(EditorStyles.helpBox)
+            _toolBubbleStyle = new GUIStyle()
             {
                 richText = true,
                 wordWrap = true,
-                padding = new RectOffset(8, 8, 4, 4),
-                margin = new RectOffset(20, 20, 2, 2),
+                padding = new RectOffset(10, 10, 8, 8),
+                margin = new RectOffset(20, 20, 4, 4),
                 fontSize = 11
             };
+            _toolBubbleStyle.normal.background = _toolBg;
     
             _systemBubbleStyle = new GUIStyle(EditorStyles.miniLabel)
             {
@@ -167,12 +192,20 @@ namespace Antimatter
                 margin = new RectOffset(20, 20, 2, 2)
             };
     
-            _inputStyle = new GUIStyle(EditorStyles.textArea)
+            _inputStyle = new GUIStyle()
             {
                 wordWrap = true,
                 fontSize = 12,
-                padding = new RectOffset(8, 8, 6, 6)
+                padding = new RectOffset(10, 10, 10, 10)
             };
+            _inputStyle.normal.background = inputBg;
+            _inputStyle.normal.textColor = Color.white;
+            _inputStyle.focused.background = inputBg;
+            _inputStyle.focused.textColor = Color.white;
+            _inputStyle.active.background = inputBg;
+            _inputStyle.active.textColor = Color.white;
+            _inputStyle.hover.background = inputBg;
+            _inputStyle.hover.textColor = Color.white;
     
             _headerStyle = new GUIStyle(EditorStyles.boldLabel)
             {
@@ -198,16 +231,19 @@ namespace Antimatter
             }
     
             // ── Fixed layout: input+status anchored to bottom, chat fills the rest ──
-            // Reserve fixed space at the bottom for input area (110px) + status bar (20px)
+            // Reserve fixed space at the bottom for input area (110px) + status bar (20px) + bottom padding (40px)
             const float inputAreaHeight = 110f;
             const float statusBarHeight = 20f;
-            const float bottomReserved = inputAreaHeight + statusBarHeight;
+            const float bottomPadding = 40f;
+            const float bottomReserved = inputAreaHeight + statusBarHeight + bottomPadding;
     
             // Chat takes everything between header and bottom-anchored input
             DrawChatArea(bottomReserved);
     
             // ── Input Area (fixed at bottom) ──
             DrawInputArea();
+
+            GUILayout.Space(40f);
     
             // ── Status Bar ──
             DrawStatusBar();
@@ -223,7 +259,7 @@ namespace Antimatter
         {
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
-                GUILayout.Label("🚀 Antimatter", _headerStyle, GUILayout.Width(100));
+                GUILayout.Label("ɅNTIMɅTTΞR", _headerStyle, GUILayout.Width(100));
     
                 GUILayout.FlexibleSpace();
     
@@ -243,16 +279,16 @@ namespace Antimatter
     
                 GUILayout.Space(8);
     
-                if (GUILayout.Button("＋", EditorStyles.toolbarButton, GUILayout.Width(24)))
+                if (GUILayout.Button(EditorGUIUtility.IconContent("Toolbar Plus"), EditorStyles.toolbarButton, GUILayout.Width(24)))
                 {
                     AgentHistory.CreateNewSession();
                     SwitchSession(AgentHistory.CurrentSessionId);
                 }
 
-                if (GUILayout.Button("⚙", EditorStyles.toolbarButton, GUILayout.Width(24)))
+                if (GUILayout.Button(EditorGUIUtility.IconContent("SettingsIcon"), EditorStyles.toolbarButton, GUILayout.Width(24)))
                     _showSettings = !_showSettings;
     
-                if (GUILayout.Button("🗑", EditorStyles.toolbarButton, GUILayout.Width(24)))
+                if (GUILayout.Button(EditorGUIUtility.IconContent("TreeEditor.Trash"), EditorStyles.toolbarButton, GUILayout.Width(24)))
                 {
                     if (EditorUtility.DisplayDialog("Clear Chat", "Clear all conversation history?", "Yes", "No"))
                     {
@@ -280,6 +316,20 @@ namespace Antimatter
                     if (newIndex != currentIndex)
                     {
                         SwitchSession(sessions[newIndex].id);
+                    }
+                }
+
+                GUILayout.FlexibleSpace();
+
+                if (GUILayout.Button("Delete All Threads", EditorStyles.toolbarButton, GUILayout.Width(110)))
+                {
+                    if (EditorUtility.DisplayDialog("Delete All Threads", "Are you sure you want to completely delete ALL saved conversation threads from disk? This cannot be undone.", "Delete All", "Cancel"))
+                    {
+                        AgentHistory.DeleteAllSessions();
+                        _orchestrator?.ClearHistory();
+                        _displayMessages.Clear();
+                        _statusText = "All threads deleted.";
+                        SwitchSession(AgentHistory.CurrentSessionId);
                     }
                 }
             }
@@ -421,21 +471,39 @@ namespace Antimatter
     
             if (_displayMessages.Count == 0)
             {
-                EditorGUILayout.Space(20);
-                EditorGUILayout.LabelField("Welcome to Antimatter!", _headerStyle);
-                EditorGUILayout.Space(4);
-                EditorGUILayout.LabelField("Type a goal below and the agent will build it step by step.",
-                    new GUIStyle(EditorStyles.centeredGreyMiniLabel) { wordWrap = true, fontSize = 12 });
-                EditorGUILayout.Space(8);
-                EditorGUILayout.LabelField("Examples:", EditorStyles.boldLabel);
-                EditorGUILayout.LabelField("  • \"Create a simple platformer with a player capsule, ground plane, and 5 platforms\"");
-                EditorGUILayout.LabelField("  • \"Add a red bouncing ball with a Rigidbody to the current scene\"");
-                EditorGUILayout.LabelField("  • \"Write a PlayerController script with WASD movement and attach it to Player\"");
+                GUILayout.Space(chatHeight * 0.25f);
+
+                EditorGUILayout.BeginVertical();
+                
+                var titleStyle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 24, alignment = TextAnchor.MiddleCenter, normal = { textColor = new Color(0.9f, 0.9f, 0.9f) } };
+                var subtitleStyle = new GUIStyle(EditorStyles.label) { fontSize = 13, alignment = TextAnchor.MiddleCenter, normal = { textColor = new Color(0.6f, 0.6f, 0.6f) } };
+                var exampleStyle = new GUIStyle(EditorStyles.label) { fontSize = 12, alignment = TextAnchor.MiddleCenter, normal = { textColor = new Color(0.5f, 0.5f, 0.5f) } };
+                
+                GUILayout.Label("ɅNTIMɅTTΞR", titleStyle);
+                GUILayout.Space(8);
+                GUILayout.Label("What would you like to build today?", subtitleStyle);
+                GUILayout.Space(35);
+
+                GUILayout.Label("Try saying:", new GUIStyle(subtitleStyle) { fontSize = 12, fontStyle = FontStyle.Normal });
+                GUILayout.Space(10);
+                
+                GUILayout.Label("\"Create a small fantasy village with a central square\"", exampleStyle);
+                GUILayout.Space(6);
+                GUILayout.Label("\"Generate a complete world with a medieval mountain kingdom\"", exampleStyle);
+                GUILayout.Space(6);
+                GUILayout.Label("\"Spawn a water splash particle system right here\"", exampleStyle);
+
+                EditorGUILayout.EndVertical();
             }
     
-            foreach (var msg in _displayMessages)
+            int startIndex = Mathf.Max(0, _displayMessages.Count - 50);
+            if (startIndex > 0)
             {
-                DrawMessage(msg);
+                EditorGUILayout.LabelField($"... {_displayMessages.Count - 50} older messages hidden ...", EditorStyles.centeredGreyMiniLabel);
+            }
+            for (int i = startIndex; i < _displayMessages.Count; i++)
+            {
+                DrawMessage(_displayMessages[i]);
             }
     
             // Auto-scroll to bottom
@@ -455,8 +523,14 @@ namespace Antimatter
                     EditorGUILayout.BeginHorizontal();
                     GUILayout.FlexibleSpace();
                     EditorGUILayout.BeginVertical(_userBubbleStyle, GUILayout.MaxWidth(position.width * 0.75f));
-                    GUILayout.Label($"<b>You</b>  <color=#888>{msg.Timestamp:HH:mm}</color>", _userBubbleStyle);
-                    GUILayout.Label(msg.Content, new GUIStyle(EditorStyles.label) { wordWrap = true, richText = true });
+                    
+                    var userHeaderStyle = new GUIStyle(EditorStyles.label) { richText = true, normal = { textColor = new Color(0.8f, 0.8f, 0.8f) } };
+                    var userTextStyle = new GUIStyle(EditorStyles.label) { wordWrap = true, richText = true, normal = { textColor = Color.white } };
+                    
+                    GUILayout.Label($"<b>You</b>  <color=#666>{msg.Timestamp:HH:mm}</color>", userHeaderStyle);
+                    GUILayout.Space(2);
+                    GUILayout.Label(msg.Content, userTextStyle);
+                    
                     EditorGUILayout.EndVertical();
                     EditorGUILayout.EndHorizontal();
                     break;
@@ -482,7 +556,8 @@ namespace Antimatter
                             try
                             {
                                 string pretty = Newtonsoft.Json.Linq.JToken.Parse(msg.ToolArgs).ToString(Newtonsoft.Json.Formatting.Indented);
-                                EditorGUILayout.TextArea(pretty, EditorStyles.helpBox, GUILayout.MaxHeight(120));
+                                var codeStyle = new GUIStyle(EditorStyles.label) { wordWrap = true, normal = { textColor = new Color(0.6f, 0.7f, 0.8f) } };
+                                GUILayout.Label(pretty, codeStyle);
                             }
                             catch
                             {
@@ -543,35 +618,61 @@ namespace Antimatter
     
         private void DrawInputArea()
         {
-            EditorGUILayout.BeginVertical("box");
-    
-            // Fixed-height input — does NOT grow with content
-            const float fixedInputHeight = 40f;
-            _inputText = EditorGUILayout.TextArea(_inputText, _inputStyle, GUILayout.Height(fixedInputHeight));
-    
-            EditorGUILayout.BeginHorizontal();
-    
+            // Give it some side margin so it's not hugging the walls completely
+            EditorGUILayout.BeginVertical(new GUIStyle() { padding = new RectOffset(10, 10, 0, 0) });
             bool isRunning = _orchestrator != null && _orchestrator.IsRunning;
-    
-            // Send button
+
+            // The main input bar using the flat dark grey _inputStyle
+            EditorGUILayout.BeginHorizontal(_inputStyle);
+
+            var borderlessTextArea = new GUIStyle(EditorStyles.textArea)
+            {
+                wordWrap = true,
+                fontSize = 13,
+                padding = new RectOffset(8, 8, 10, 10)
+            };
+            borderlessTextArea.normal.background = null;
+            borderlessTextArea.focused.background = null;
+            borderlessTextArea.hover.background = null;
+            borderlessTextArea.active.background = null;
+            borderlessTextArea.normal.textColor = Color.white;
+            borderlessTextArea.focused.textColor = Color.white;
+
+            _inputText = EditorGUILayout.TextArea(_inputText, borderlessTextArea, GUILayout.Height(40f));
+
+            // Completely flat buttons without Unity's button borders
+            var btnStyle = new GUIStyle(EditorStyles.label)
+            {
+                fixedWidth = 32,
+                fixedHeight = 40,
+                alignment = TextAnchor.MiddleCenter
+            };
+
+            var defaultColor = GUI.color;
+            if (_isRecordingVoice) GUI.color = Color.red;
+            
+            GUIContent micIcon = _isRecordingVoice ? EditorGUIUtility.IconContent("Record On") : EditorGUIUtility.IconContent("Record Off");
+            micIcon.tooltip = _isRecordingVoice ? "Stop Recording" : "Record Voice";
+
+            if (GUILayout.Button(micIcon, btnStyle))
+            {
+                ToggleVoiceRecord();
+            }
+            GUI.color = defaultColor;
+
             using (new EditorGUI.DisabledScope(isRunning || string.IsNullOrWhiteSpace(_inputText)))
             {
-                if (GUILayout.Button("Send", GUILayout.Height(26), GUILayout.Width(60)))
+                GUIContent sendIcon = EditorGUIUtility.IconContent("PlayButton");
+                sendIcon.tooltip = "Send Message";
+
+                if (GUILayout.Button(sendIcon, btnStyle))
                 {
                     SendMessage();
                 }
             }
 
-            // Mic button
-            var defaultColor = GUI.backgroundColor;
-            if (_isRecordingVoice) GUI.backgroundColor = Color.red;
-            if (GUILayout.Button(_isRecordingVoice ? "⬛" : "🎤", GUILayout.Height(26), GUILayout.Width(35)))
-            {
-                ToggleVoiceRecord();
-            }
-            GUI.backgroundColor = defaultColor;
+            EditorGUILayout.EndHorizontal();
 
-            // Check for Enter key (without shift)
             if (Event.current.type == EventType.KeyDown &&
                 Event.current.keyCode == KeyCode.Return &&
                 !Event.current.shift &&
@@ -581,31 +682,55 @@ namespace Antimatter
                 SendMessage();
                 Event.current.Use();
             }
-    
-            GUILayout.FlexibleSpace();
-    
-            // Agent controls
+
             if (isRunning)
             {
+                GUILayout.Space(5f); // 5px below the input box
+                EditorGUILayout.BeginHorizontal();
+                GUILayout.FlexibleSpace();
+
+                // Wrap the controls in a sleek dark pill using the input style
+                EditorGUILayout.BeginHorizontal(new GUIStyle(_inputStyle) { padding = new RectOffset(6, 6, 2, 2) });
+
+                var ctrlBtnStyle = new GUIStyle(EditorStyles.label)
+                {
+                    fixedWidth = 24,
+                    fixedHeight = 24,
+                    alignment = TextAnchor.MiddleCenter
+                };
+
+                GUIContent resumeIcon = EditorGUIUtility.IconContent("PlayButton");
+                resumeIcon.tooltip = "Resume";
+                GUIContent pauseIcon = EditorGUIUtility.IconContent("PauseButton");
+                pauseIcon.tooltip = "Pause";
+                GUIContent cancelIcon = EditorGUIUtility.IconContent("Toolbar Minus");
+                cancelIcon.tooltip = "Cancel / Stop Generation";
+
                 if (_orchestrator.IsPaused)
                 {
-                    if (GUILayout.Button("▶ Resume", GUILayout.Width(75)))
+                    if (GUILayout.Button(resumeIcon, ctrlBtnStyle))
                         _orchestrator.Resume();
                 }
                 else
                 {
-                    if (GUILayout.Button("⏸ Pause", GUILayout.Width(75)))
+                    if (GUILayout.Button(pauseIcon, ctrlBtnStyle))
                         _orchestrator.Pause();
                 }
-    
-                if (GUILayout.Button("⏹ Cancel", GUILayout.Width(75)))
+
+                GUILayout.Space(6); // Slight gap between pause and cancel
+
+                if (GUILayout.Button(cancelIcon, ctrlBtnStyle))
                 {
                     _orchestrator.Cancel();
                     _statusText = "Canceled";
                 }
+
+                EditorGUILayout.EndHorizontal();
+
+                GUILayout.FlexibleSpace();
+                EditorGUILayout.EndHorizontal();
             }
-    
-            EditorGUILayout.EndHorizontal();
+
             EditorGUILayout.EndVertical();
         }
     
@@ -772,33 +897,44 @@ namespace Antimatter
             GUILayout.EndVertical();
         }
 
-        private async void ToggleVoiceRecord()
+        private string _preRecordText = "";
+
+        private void ToggleVoiceRecord()
         {
             if (_isRecordingVoice)
             {
                 _isRecordingVoice = false;
-                _statusText = "Transcribing voice...";
+                _statusText = "Finalizing transcription...";
+                VoiceRecorder.StopRecording();
                 Repaint();
-                try
-                {
-                    string transcribed = await VoiceRecorder.StopAndTranscribeAsync();
-                    if (!string.IsNullOrEmpty(transcribed))
-                    {
-                        _inputText += string.IsNullOrEmpty(_inputText) ? transcribed : " " + transcribed;
-                    }
-                    _statusText = "Transcription complete.";
-                }
-                catch (Exception ex)
-                {
-                    _statusText = "Voice Error: " + ex.Message;
-                }
             }
             else
             {
+                _preRecordText = _inputText;
                 _isRecordingVoice = true;
-                _statusText = "Recording voice... Click Mic again to stop.";
+                _statusText = "Recording... (Streaming)";
                 VoiceRecorder.StartRecording();
+                Repaint();
             }
+        }
+
+        private void HandleTranscriptionUpdated(string text)
+        {
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                _inputText = (string.IsNullOrWhiteSpace(_preRecordText) ? text : _preRecordText + " " + text).Trim();
+                Repaint();
+            }
+        }
+
+        private void HandleTranscriptionFinished(string text)
+        {
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                _inputText = (string.IsNullOrWhiteSpace(_preRecordText) ? text : _preRecordText + " " + text).Trim();
+            }
+            _statusText = "Idle";
+            _isRecordingVoice = false;
             Repaint();
         }
     

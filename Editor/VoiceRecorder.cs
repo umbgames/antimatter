@@ -13,45 +13,189 @@ namespace Antimatter
         private static AudioClip _recordingClip;
         private static bool _isRecording;
         private static string _micDevice;
+        
+        public static event Action<string> OnTranscriptionUpdated;
+        public static event Action<string> OnTranscriptionFinished;
+
+        private static double _lastApiCallTime;
+        private static string _currentTranscription = "";
+        private static int _currentRequestId = 0;
 
         public static void StartRecording()
         {
             if (Microphone.devices.Length == 0)
+            {
+                Debug.LogError("[Antimatter Voice] No microphone devices found.");
                 throw new Exception("No microphone devices found.");
+            }
 
             _micDevice = Microphone.devices[0];
-            // Start recording: device, loop=false, length=60 seconds, frequency=16000
+            Debug.Log($"[Antimatter Voice] Starting recording on: {_micDevice}");
             _recordingClip = Microphone.Start(_micDevice, false, 60, 16000);
             _isRecording = true;
+            _currentTranscription = "";
+            _lastApiCallTime = EditorApplication.timeSinceStartup;
+            _currentRequestId = 0;
+
+            EditorApplication.update += EditorUpdate;
         }
 
-        public static async Task<string> StopAndTranscribeAsync()
+        public static void StopRecording()
         {
-            if (!_isRecording) return null;
-
+            if (!_isRecording) return;
+            
+            _isRecording = false;
+            EditorApplication.update -= EditorUpdate;
+            
             int lastPos = Microphone.GetPosition(_micDevice);
             Microphone.End(_micDevice);
-            _isRecording = false;
+            
+            Debug.Log($"[Antimatter Voice] Stopped recording. Final position: {lastPos}");
 
-            if (lastPos == 0) return null; // Nothing recorded
-
-            string apiKey = AiProviderSettings.OpenAIKey;
-            if (string.IsNullOrWhiteSpace(apiKey))
-                throw new Exception("OpenAI API Key is required for Voice Transcription. Please set it in Settings.");
-
-            // Extract the actual recorded data
-            float[] samples = new float[lastPos];
-            _recordingClip.GetData(samples, 0);
-
-            // Convert to WAV
-            byte[] wavData = EncodeAsWav(samples, _recordingClip.channels, _recordingClip.frequency);
-
-            // Upload to Whisper
-            return await TranscribeWithWhisperAsync(wavData, apiKey);
+            if (lastPos > 0)
+            {
+                _ = FinalizeTranscriptionAsync(lastPos);
+            }
+            else
+            {
+                OnTranscriptionFinished?.Invoke(_currentTranscription);
+            }
         }
 
-        private static async Task<string> TranscribeWithWhisperAsync(byte[] wavData, string apiKey)
+        private static void EditorUpdate()
         {
+            if (!_isRecording) return;
+
+            if (EditorApplication.timeSinceStartup - _lastApiCallTime > 1.5)
+            {
+                _lastApiCallTime = EditorApplication.timeSinceStartup;
+                
+                int currentPos = Microphone.GetPosition(_micDevice);
+                
+                if (currentPos > 8000)
+                {
+                    _ = TranscribeChunkAsync(currentPos);
+                }
+            }
+        }
+
+        private static async Task TranscribeChunkAsync(int length)
+        {
+            int reqId = ++_currentRequestId;
+            float[] samples = new float[length];
+            _recordingClip.GetData(samples, 0);
+
+            if (IsSilent(samples)) 
+            {
+                Debug.Log("[Antimatter Voice] Chunk was silent. Skipping.");
+                return;
+            }
+
+            samples = StripTrailingSilence(samples);
+            Debug.Log($"[Antimatter Voice] Sending chunk {reqId} of size {samples.Length} to Whisper...");
+            byte[] wavData = EncodeAsWav(samples, _recordingClip.channels, _recordingClip.frequency);
+            
+            try
+            {
+                string text = await SendToWhisper(wavData);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    if (reqId < _currentRequestId) 
+                    {
+                        Debug.Log($"[Antimatter Voice] Discarding stale chunk {reqId}.");
+                        return; // Discard out-of-order response
+                    }
+
+                    Debug.Log($"[Antimatter Voice] Partial Transcript {reqId}: {text}");
+                    _currentTranscription = text;
+                    OnTranscriptionUpdated?.Invoke(text);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Antimatter Voice] Stream chunk error: {ex.Message}");
+            }
+        }
+
+        private static async Task FinalizeTranscriptionAsync(int length)
+        {
+            int reqId = ++_currentRequestId;
+            float[] samples = new float[length];
+            _recordingClip.GetData(samples, 0);
+
+            if (!IsSilent(samples))
+            {
+                samples = StripTrailingSilence(samples);
+                Debug.Log($"[Antimatter Voice] Sending FINAL chunk {reqId} (size {samples.Length}) to Whisper...");
+                byte[] wavData = EncodeAsWav(samples, _recordingClip.channels, _recordingClip.frequency);
+                try
+                {
+                    string text = await SendToWhisper(wavData);
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        Debug.Log($"[Antimatter Voice] Final Transcript {reqId}: {text}");
+                        _currentTranscription = text;
+                    }
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError("[Antimatter Voice] Whisper API Error: " + e.Message);
+                }
+            }
+            else
+            {
+                Debug.Log("[Antimatter Voice] Final chunk was silent.");
+            }
+            
+            OnTranscriptionFinished?.Invoke(_currentTranscription);
+        }
+
+        private static bool IsSilent(float[] samples)
+        {
+            float max = 0;
+            foreach (var s in samples)
+            {
+                if (Mathf.Abs(s) > max) max = Mathf.Abs(s);
+            }
+            return max < 0.005f; 
+        }
+
+        private static float[] StripTrailingSilence(float[] samples)
+        {
+            int lastNonSilent = samples.Length - 1;
+            for (int i = samples.Length - 1; i >= 0; i--)
+            {
+                if (Mathf.Abs(samples[i]) > 0.005f)
+                {
+                    lastNonSilent = i;
+                    break;
+                }
+            }
+            
+            // Keep up to 0.25 seconds of silence padding at the end (4000 samples at 16khz)
+            int pad = 4000;
+            int newLength = Mathf.Min(samples.Length, lastNonSilent + pad);
+            if (newLength == samples.Length) return samples;
+            
+            float[] stripped = new float[newLength];
+            Array.Copy(samples, stripped, newLength);
+            return stripped;
+        }
+
+        private static async Task<string> SendToWhisper(byte[] wavData)
+        {
+            bool useGroq = AiProviderSettings.Provider == AiProvider.Groq;
+            string apiKey = useGroq ? AiProviderSettings.GroqKey : AiProviderSettings.OpenAIKey;
+
+            if (string.IsNullOrWhiteSpace(apiKey)) 
+            {
+                Debug.LogError("[Antimatter Voice] API Key is missing.");
+                return null;
+            }
+
+            string endpoint = useGroq ? "https://api.groq.com/openai/v1/audio/transcriptions" : "https://api.openai.com/v1/audio/transcriptions";
+            string model = useGroq ? "whisper-large-v3" : "whisper-1";
+
             using var client = new HttpClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
@@ -59,14 +203,16 @@ namespace Antimatter
             var audioContent = new ByteArrayContent(wavData);
             audioContent.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
             content.Add(audioContent, "file", "voice.wav");
-            content.Add(new StringContent("whisper-1"), "model");
+            content.Add(new StringContent(model), "model");
+            content.Add(new StringContent("en"), "language");
 
-            var response = await client.PostAsync("https://api.openai.com/v1/audio/transcriptions", content);
+            var response = await client.PostAsync(endpoint, content);
             string responseText = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
-                throw new Exception($"Whisper API failed: ({response.StatusCode}) {responseText}");
+                Debug.LogError($"[Antimatter Voice] API Error ({response.StatusCode}): {responseText}");
+                return null;
             }
 
             var json = Newtonsoft.Json.Linq.JToken.Parse(responseText);
@@ -78,11 +224,10 @@ namespace Antimatter
             using var memoryStream = new MemoryStream();
             using var writer = new BinaryWriter(memoryStream);
             
-            // Header
-            writer.Write(new char[4] { 'R', 'I', 'F', 'F' });
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
             writer.Write(36 + samples.Length * 2);
-            writer.Write(new char[4] { 'W', 'A', 'V', 'E' });
-            writer.Write(new char[4] { 'f', 'm', 't', ' ' });
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
             writer.Write(16);
             writer.Write((short)1);
             writer.Write((short)channels);
@@ -90,10 +235,9 @@ namespace Antimatter
             writer.Write(frequency * channels * 2);
             writer.Write((short)(channels * 2));
             writer.Write((short)16);
-            writer.Write(new char[4] { 'd', 'a', 't', 'a' });
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
             writer.Write(samples.Length * 2);
 
-            // Payload
             int rescaleFactor = 32767;
             foreach (float sample in samples)
             {

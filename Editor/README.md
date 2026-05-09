@@ -24,3 +24,9 @@ To add a new capability to the AI agent:
 2.  Provide a JSON Schema for its parameters.
 3.  Implement the logic using `Undo` registered editor calls.
 4.  The agent will automatically see the new tool in its system prompt on the next request.
+
+
+### 4. Specialized Procedural Tools
+*   **`RoadGen`**: A procedural road and bridge construction system (`BridgeBuilder`, `RoadMeshBuilder`).
+*   **`TerrainStamper` & `TerrainEditor`**: Tools for modifying Unity Terrain with brushes, stamps, and procedural erosion/shaping.
+*   **`VoiceRecorder`**: Integrates OpenAI Whisper for voice-to-plan interactions within the editor.
