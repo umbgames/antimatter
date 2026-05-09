@@ -293,6 +293,77 @@ namespace Antimatter
                 );
             }
     
+            // PASS 3: Roadside Props (Streetlights & Guardrails)
+            var propsParent = EnsureGroup(scene, "AI_RoadProps");
+            ClearChildrenImmediate(propsParent.transform);
+            
+            float propStep = 45f;
+            foreach (var line in pendingSurface)
+            {
+                if (line == null || line.Count < 2) continue;
+                
+                float accum = 0f;
+                for (int i = 0; i < line.Count - 1; i++)
+                {
+                    Vector3 p0 = line[i];
+                    Vector3 p1 = line[i + 1];
+                    float segLen = Vector3.Distance(p0, p1);
+                    
+                    while (accum + propStep <= segLen)
+                    {
+                        accum += propStep;
+                        float t = accum / segLen;
+                        Vector3 w = Vector3.Lerp(p0, p1, t);
+                        Vector3 dir = (p1 - p0).normalized;
+                        Vector3 right = Vector3.Cross(Vector3.up, dir).normalized;
+                        
+                        float px = Mathf.InverseLerp(terrain.transform.position.x, terrain.transform.position.x + terrain.terrainData.size.x, w.x);
+                        float pz = Mathf.InverseLerp(terrain.transform.position.z, terrain.transform.position.z + terrain.terrainData.size.z, w.z);
+                        float slope = Vector3.Angle(Vector3.up, terrain.terrainData.GetInterpolatedNormal(px, pz));
+                        
+                        bool isCliff = slope > 22f; // Trigger guardrails if steep
+                        
+                        for (int side = -1; side <= 1; side += 2)
+                        {
+                            Vector3 pos = w + right * (s.roadHalfWidth + 1.2f) * side;
+                            pos.y = terrain.SampleHeight(pos) + terrain.transform.position.y;
+                            
+                            if (isCliff)
+                            {
+                                var gr = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                                gr.name = "Guardrail";
+                                SceneManager.MoveGameObjectToScene(gr, scene);
+                                gr.transform.SetParent(propsParent.transform, true);
+                                gr.transform.position = pos + Vector3.up * 0.45f;
+                                gr.transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
+                                gr.transform.localScale = new Vector3(0.4f, 0.4f, propStep * 0.95f);
+                            }
+                            else
+                            {
+                                // Add a streetlight less frequently (e.g., skip half)
+                                if (accum % (propStep * 2) > propStep * 0.5f) continue;
+                                
+                                var sl = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                                sl.name = "Streetlight";
+                                SceneManager.MoveGameObjectToScene(sl, scene);
+                                sl.transform.SetParent(propsParent.transform, true);
+                                sl.transform.position = pos + Vector3.up * 4.5f;
+                                sl.transform.localScale = new Vector3(0.3f, 4.5f, 0.3f);
+                                
+                                var arm = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                                SceneManager.MoveGameObjectToScene(arm, scene);
+                                arm.transform.SetParent(sl.transform, true);
+                                arm.transform.position = pos + Vector3.up * 8.8f + right * (-side * 1.5f);
+                                arm.transform.localScale = new Vector3(3f, 0.2f, 0.2f);
+                                arm.transform.rotation = Quaternion.LookRotation(right * -side, Vector3.up);
+                            }
+                        }
+                    }
+                    accum -= segLen;
+                    if (accum < 0f) accum = 0f;
+                }
+            }
+    
             CreateHubMarkers(scene, hubs.Select(h => h.world).ToList(), hubsParent.transform);
         }
     

@@ -50,6 +50,14 @@ namespace Antimatter
         [Range(10f, 200f)] public float lotMaxSize = 22f;
         [Range(4f, 200f)] public float buildingHeightMin = 6f;
         [Range(8f, 400f)] public float buildingHeightMax = 22f;
+
+        [Header("Prefabs (Optional)")]
+        [Tooltip("Used for dense/core areas like Modern City centers or Medieval Markets.")]
+        public GameObject[] coreCommercialPrefabs;
+        [Tooltip("Used for spreading suburban areas, village outskirts, or general housing.")]
+        public GameObject[] residentialPrefabs;
+        [Tooltip("Used when prompt suggests industrial complexes, factories, or ruined buildings.")]
+        public GameObject[] industrialPrefabs;
     
         [Header("Road Clearance")]
         [Range(2f, 200f)] public float roadClearance = 10f;

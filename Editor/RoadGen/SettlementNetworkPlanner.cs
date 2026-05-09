@@ -392,7 +392,7 @@ namespace Antimatter
                 if (Vector2.Distance(new Vector2(world.x, world.z), new Vector2(set.center.x, set.center.z)) > set.radius) continue;
     
                 if (!IsBuildable(terrain, world, s)) continue;
-                if (DistanceToRoadsXZ(world, roadLines) < s.roadClearance) continue;
+                if (DistanceToRoadsXZ(world, roadLines) < s.roadClearance + parcelW * 0.6f) continue;
 
                 // For modern blocks, we check vs placed list too
                 if (TooCloseToPlaced(world, placedPos, Mathf.Max(parcelW, parcelD) * 0.8f)) continue;
@@ -407,7 +407,7 @@ namespace Antimatter
                 float w = parcelW * Mathf.Lerp(0.55f, 0.90f, (float)rng.NextDouble());
                 float d = parcelD * Mathf.Lerp(0.55f, 0.90f, (float)rng.NextDouble());
     
-                CreateBuilding(scene, terrain, parent, world, w, d, h, rot, buildingMaterial, $"BlockBld_{placedCount:000}");
+                CreateBuilding(scene, terrain, parent, world, w, d, h, rot, buildingMaterial, $"BlockBld_{placedCount:000}", s.coreCommercialPrefabs, rng);
                 placedPos.Add(world);
                 placedCount++;
             }
@@ -453,9 +453,9 @@ namespace Antimatter
                     pos = SnapToTerrain(terrain, pos);
 
                     if (!IsBuildable(terrain, pos, s)) { skipped++; continue; }
-                    if (DistanceToRoadsXZ(pos, roadLines) < s.roadClearance) continue;
-
                     float lot = Mathf.Lerp(s.lotMinSize * 0.8f, s.lotMaxSize * 1.1f, (float)rng.NextDouble());
+                    if (DistanceToRoadsXZ(pos, roadLines) < s.roadClearance + lot * 0.55f) continue;
+
                     if (TooCloseToPlaced(pos, placedPos, lot * 1.1f)) continue; // New proximity check
 
                     float w = lot * Mathf.Lerp(0.55f, 0.95f, (float)rng.NextDouble());
@@ -469,7 +469,8 @@ namespace Antimatter
                         ? Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f)
                         : Quaternion.LookRotation(toCenter.normalized, Vector3.up);
 
-                    CreateBuilding(scene, terrain, parent, pos, w, d, h, rot, buildingMaterial, $"MedBuilding_{placed:000}");
+                    var prefabs = r <= rings / 2 ? s.coreCommercialPrefabs : s.residentialPrefabs;
+                    CreateBuilding(scene, terrain, parent, pos, w, d, h, rot, buildingMaterial, $"MedBuilding_{placed:000}", prefabs, rng);
                     placedPos.Add(pos);
                     placed++;
                 }
@@ -591,10 +592,10 @@ namespace Antimatter
                     pos = SnapToTerrain(terrain, pos);
     
                     if (!IsBuildable(terrain, pos, s)) continue;
-                    if (DistanceToRoadsXZ(pos, roadLines) < s.roadClearance) continue;
+                    float lot = Mathf.Lerp(s.lotMinSize * 0.65f, s.lotMaxSize * 0.9f, (float)rng.NextDouble());
+                    if (DistanceToRoadsXZ(pos, roadLines) < s.roadClearance + lot * 0.55f) continue;
     
                     float yard = Mathf.Max(0f, s.suburbanYardPadding);
-                    float lot = Mathf.Lerp(s.lotMinSize * 0.65f, s.lotMaxSize * 0.9f, (float)rng.NextDouble());
                     if (TooCloseToPlaced(pos, placedPos, lot * 1.05f)) continue;
                     float w = lot * Mathf.Lerp(0.45f, 0.80f, (float)rng.NextDouble());
                     float d = lot * Mathf.Lerp(0.45f, 0.80f, (float)rng.NextDouble());
@@ -607,7 +608,7 @@ namespace Antimatter
                         ? Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f)
                         : Quaternion.LookRotation(toC.normalized, Vector3.up);
     
-                    CreateBuilding(scene, terrain, parent, pos, w, d, h, rot, buildingMaterial, $"House_{placed:000}");
+                    CreateBuilding(scene, terrain, parent, pos, w, d, h, rot, buildingMaterial, $"House_{placed:000}", s.residentialPrefabs, rng);
                     placedPos.Add(pos);
                     placed++;
                 }
@@ -620,9 +621,9 @@ namespace Antimatter
                 pos = SnapToTerrain(terrain, pos);
     
                 if (!IsBuildable(terrain, pos, s)) continue;
-                if (DistanceToRoadsXZ(pos, roadLines) < s.roadClearance) continue;
-    
                 float lot = Mathf.Lerp(s.lotMinSize * 0.6f, s.lotMaxSize * 0.9f, (float)rng.NextDouble());
+                if (DistanceToRoadsXZ(pos, roadLines) < s.roadClearance + lot * 0.55f) continue;
+    
                 if (TooCloseToPlaced(pos, placedPos, lot * 1.15f)) continue;
                 float w = lot * Mathf.Lerp(0.45f, 0.75f, (float)rng.NextDouble());
                 float d = lot * Mathf.Lerp(0.45f, 0.75f, (float)rng.NextDouble());
@@ -635,7 +636,7 @@ namespace Antimatter
                     ? Quaternion.Euler(0f, (float)rng.NextDouble() * 360f, 0f)
                     : Quaternion.LookRotation(new Vector3(dirToRoad.x, 0f, dirToRoad.z), Vector3.up);
     
-                CreateBuilding(scene, terrain, parent, pos, w, d, h, rot, buildingMaterial, $"House_{placed:000}");
+                CreateBuilding(scene, terrain, parent, pos, w, d, h, rot, buildingMaterial, $"House_{placed:000}", s.residentialPrefabs, rng);
                 placedPos.Add(pos);
                 placed++;
             }
@@ -654,9 +655,40 @@ namespace Antimatter
             float height,
             Quaternion rot,
             Material mat,
-            string name)
+            string name,
+            GameObject[] prefabs = null,
+            System.Random rng = null)
         {
-            var b = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            GameObject b = null;
+            if (prefabs != null && prefabs.Length > 0 && rng != null)
+            {
+                var proto = prefabs[rng.Next(prefabs.Length)];
+                if (proto != null)
+                {
+#if UNITY_EDITOR
+                    b = (GameObject)PrefabUtility.InstantiatePrefab(proto);
+#else
+                    b = GameObject.Instantiate(proto);
+#endif
+                    if (b != null)
+                    {
+                        b.name = name;
+                        SceneManager.MoveGameObjectToScene(b, scene);
+                        b.transform.SetParent(parent, true);
+
+                        // Uniform randomize it slightly
+                        float s = Mathf.Lerp(1.2f, 2.0f, (float)rng.NextDouble());
+                        b.transform.localScale = proto.transform.localScale * s;
+
+                        float gy = terrain.SampleHeight(pos) + terrain.transform.position.y;
+                        b.transform.position = new Vector3(pos.x, gy, pos.z);
+                        b.transform.rotation = rot;
+                        return;
+                    }
+                }
+            }
+
+            b = GameObject.CreatePrimitive(PrimitiveType.Cube);
             b.name = name;
             SceneManager.MoveGameObjectToScene(b, scene);
             b.transform.SetParent(parent, true);
