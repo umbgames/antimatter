@@ -1,0 +1,17 @@
+{
+    "name": "Antimatter.Runtime",
+    "rootNamespace": "Antimatter",
+    "references": [
+        "GUID:j98246e9d6d5334468f9a2e6f2122601",
+        "Newtonsoft.Json"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
