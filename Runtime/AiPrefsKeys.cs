@@ -8,16 +8,11 @@ namespace Antimatter
         // ── Provider Selection ──
         public const string Provider = "AI_GAMEGEN_PROVIDER";
 
-        // ── API Keys ──
-        public const string OpenAIKey   = "AI_GAMEGEN_OPENAI_KEY";
-        public const string GroqKey     = "AI_GAMEGEN_GROQ_KEY";
-        public const string GeminiKey   = "AI_GAMEGEN_GEMINI_KEY";
-        public const string CustomUrl   = "AI_GAMEGEN_CUSTOM_URL";
-
         // ── Model Names (per provider, user-configurable) ──
         public const string OpenAIModel  = "AI_GAMEGEN_OPENAI_MODEL";
         public const string GroqModel    = "AI_GAMEGEN_GROQ_MODEL";
         public const string GeminiModel  = "AI_GAMEGEN_GEMINI_MODEL";
+        public const string OpenRouterModel = "AI_GAMEGEN_OPENROUTER_MODEL";
 
         // ── Generation Settings ──
         public const string MaxRetries       = "AI_GAMEGEN_MAX_RETRIES";
@@ -51,6 +46,7 @@ namespace Antimatter
         public const string DefaultOpenAIModel  = "gpt-4o-mini";
         public const string DefaultGroqModel    = "llama3-groq-70b-8192-tool-use-preview";
         public const string DefaultGeminiModel  = "gemini-2.0-flash";
+        public const string DefaultOpenRouterModel = "google/gemini-2.5-flash"; // just a default
         public const string DefaultImageModel   = "gpt-image-1";
         public const string DefaultImageSize    = "1024x1024";
         public const int    DefaultMaxRetries   = 3;

@@ -112,7 +112,7 @@ namespace Antimatter
                 }
     
                 worldPath = PolylineUtils.SimplifyXZ(worldPath, s.simplifyToleranceWorld);
-                worldPath = PolylineUtils.Chaikin(worldPath, s.chaikinIterations);
+                worldPath = PolylineUtils.CatmullRom(worldPath, 8); // 8 is the resolution per segment
     
                 PolylineUtils.ApplyGradeProfileToTerrain(grid, worldPath, s.roadYOffset, s.maxRoadGrade);
     
@@ -234,42 +234,44 @@ namespace Antimatter
                 roadIndex++;
             }
     
+            float highwayHalfWidth = s.roadHalfWidth * 1.5f; // Phase 2: Widen main roads to multi-lane highways
+
             // CONNECT PASS: snap + intersections on centerlines
             var connect = new RoadCenterlineConnector.Settings
             {
-                snapRadius = Mathf.Max(2f, s.roadHalfWidth * 1.25f),
+                snapRadius = Mathf.Max(2f, highwayHalfWidth * 1.25f),
                 mergeEps = 0.25f,
-                intersectionEps = Mathf.Max(0.75f, s.roadHalfWidth * 0.2f),
+                intersectionEps = Mathf.Max(0.75f, highwayHalfWidth * 0.2f),
                 flattenY = true
             };
     
             RoadCenterlineConnector.ConnectAll(pendingSurface, connect, out var intersectionPoints);
     
             // PASS 2: stamp + build meshes from connected centerlines
+            TerrainStamper.StampPaths(
+                terrain,
+                pendingSurface,
+                highwayHalfWidth,
+                s.stampFalloff,
+                s.stampBlend,
+                s.stampCutDepth,
+                s.roadYOffset);
+
             for (int i = 0; i < pendingSurface.Count; i++)
             {
                 var line = pendingSurface[i];
                 if (line == null || line.Count < 2) continue;
-    
-                TerrainStamper.StampPath(
-                    terrain,
-                    line,
-                    s.roadHalfWidth,
-                    s.stampFalloff,
-                    s.stampBlend,
-                    s.stampCutDepth,
-                    s.roadYOffset);
-    
-                string rName = $"Road_{i:000}";
+
+                string rName = $"Highway_{i:000}";
                 var road = RoadMeshBuilder.BuildOrUpdateRoad(
                     scene,
                     terrain,
                     rName,
                     line,
-                    s.roadHalfWidth,
+                    highwayHalfWidth,
                     s.roadYOffset,
                     roadMaterial,
-                    RoadMeshBuilder.RoadConformMode.SurfaceProjectToTerrain,
+                    RoadMeshBuilder.RoadConformMode.TunnelNoProject,
                     addCollider: true);
     
                 if (road != null)
@@ -285,7 +287,7 @@ namespace Antimatter
                     parentName: "AI_RoadJunctions",
                     intersectionsWorld: intersectionPoints,
                     surfaceCenterlines: pendingSurface,
-                    roadHalfWidth: s.roadHalfWidth,
+                    roadHalfWidth: highwayHalfWidth,
                     yOffset: s.roadYOffset + 0.03f,
                     patchMaterial: roadMaterial,
                     markingMaterial: roadMarkingMaterial,
@@ -443,9 +445,13 @@ namespace Antimatter
                 float dist = Mathf.Sqrt(dx * dx + dy * dy);
     
                 float c = (grid.cost[hubs[i].grid.x, hubs[i].grid.y] + grid.cost[hubs[j].grid.x, hubs[j].grid.y]) * 0.5f;
-                // Add "entanglement" jitter to avoid dull, perfect paths as per user request
-                float jitter = 0.8f + (float)rng.NextDouble() * 0.45f; // 0.8 to 1.25 range
-                float w = dist * c * jitter;
+                
+                // Add penalty for large elevation differences to encourage realistic paths that follow contours
+                float elevDiff = Mathf.Abs(grid.height01[hubs[i].grid.x, hubs[i].grid.y] - grid.height01[hubs[j].grid.x, hubs[j].grid.y]);
+                
+                // Adjusted "entanglement" jitter to avoid chaotic spaghetti networks while staying organic
+                float jitter = 0.95f + (float)rng.NextDouble() * 0.15f; // 0.95 to 1.10 range
+                float w = dist * (c + elevDiff * 5.0f) * jitter;
     
                 all.Add(new Edge { a = i, b = j, w = w });
             }
@@ -567,12 +573,6 @@ namespace Antimatter
                 }
                 else
                 {
-                    // FIX for your TerrainStamper: no + roadYOffset here
-                    for (int i = 0; i < seg.Count; i++)
-                    {
-                        float y = grid.HeightAtWorld(seg[i]);
-                        seg[i] = new Vector3(seg[i].x, y, seg[i].z);
-                    }
                     surfaces.Add(seg);
                 }
             }
@@ -680,14 +680,27 @@ namespace Antimatter
     
             for (int i = 0; i < hubs.Count; i++)
             {
-                var g = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                g.name = $"Hub_{i:00}";
+                // Create Roundabout Island at the Hub
+                var g = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                g.name = $"Roundabout_{i:00}";
                 g.transform.SetParent(parent, false);
-                g.transform.position = hubs[i] + Vector3.up * 2f;
-                g.transform.localScale = Vector3.one * 6f;
+                g.transform.position = hubs[i] + Vector3.up * 0.1f;
+                g.transform.localScale = new Vector3(18f, 0.2f, 18f); // Large roundabout island
     
                 var col = g.GetComponent<Collider>();
                 if (col != null) UnityEngine.Object.DestroyImmediate(col);
+
+                var rend = g.GetComponent<Renderer>();
+                if (rend) rend.sharedMaterial.color = new Color(0.36f, 0.55f, 0.28f); // Grass island
+
+                // Add a small monument or tree in the center of the roundabout
+                var tree = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                tree.name = "Roundabout_Tree";
+                tree.transform.SetParent(g.transform, false);
+                tree.transform.localPosition = new Vector3(0, 1.5f, 0);
+                tree.transform.localScale = new Vector3(0.1f, 3f, 0.1f);
+                var treeRend = tree.GetComponent<Renderer>();
+                if (treeRend) treeRend.sharedMaterial.color = new Color(0.2f, 0.4f, 0.15f);
             }
         }
     

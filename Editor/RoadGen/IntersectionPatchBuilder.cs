@@ -62,10 +62,7 @@ namespace Antimatter
             {
                 Vector3 ip = intersectionsWorld[i];
     
-                // Terrain snap
                 float y = ip.y;
-                if (terrain != null && terrain.terrainData != null)
-                    y = terrain.SampleHeight(ip) + terrain.transform.position.y;
     
                 // Dominant directions around this intersection (XZ)
                 GetDominantDirections(ip, surfaceCenterlines, roadHalfWidth, out var dirs);

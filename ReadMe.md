@@ -37,5 +37,11 @@ You can obtain your API keys from the following links:
 ### 2. Agentic Workflow
 Open the **Agent Window** (Tools -> Antimatter -> Agent). You can give the agent high-level tasks like "Create a small fantasy village with a central square" or "Add a player character with a basic movement script". The agent will use its tools to inspect the scene, plan, and execute the changes for you.
 
+Generate a simple playable 3D basketball mini-game.
+
+The Court: Create a flat green plane for the ground with a BoxCollider.
+The Hoop Structure: Create a tall gray 'Pole' (Procedural Pole). Anchor a white rectangular 'Backboard' (Primitive Cube, flattened) to the Top-Front of the Pole. Anchor an orange 'Rim' (Procedural Torus) to the Bottom-Center of the Backboard. Finally, anchor a white 'Net' (Procedural Net) to the Bottom of the Rim. Ensure the Pole, Backboard, and Rim have MeshColliders so the ball can bounce off them.
+The Basketball: Create an orange 'Basketball' (Primitive Sphere) resting on the ground, and add a Rigidbody and a SphereCollider. Make sure it has a PhysicsMaterial that makes it very bouncy.
+The Gameplay: Write and attach a C# script called BasketballShooter to the Main Camera. The script should look for the 'Basketball' object, and whenever the player clicks the left mouse button, apply an impulse force to the basketball to throw it forward and slightly upward toward the hoop."
 ---
 *Created by UMB GAMES AND TECHNOLOGY LTD for professional-grade Unity workflows.*

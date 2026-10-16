@@ -136,5 +136,76 @@ namespace Antimatter
 
             return AgentToolResult.Ok(sb.ToString());
         }
+
+        /// <summary>
+        /// Scans the terrain to find the exact world coordinates for specific features like 'HighestPeak', 'LowestValley', or 'LargestFlatArea', or near an object.
+        /// </summary>
+        public static AgentToolResult ToolAnalyzeTerrainFeatures(JObject args)
+        {
+            var terrain = Object.FindObjectOfType<Terrain>();
+            if (terrain == null || terrain.terrainData == null)
+                return AgentToolResult.Fail("No terrain found in scene.");
+
+            string feature = args["feature"]?.Value<string>();
+            if (string.IsNullOrWhiteSpace(feature)) return AgentToolResult.Fail("feature is required.");
+
+            var td = terrain.terrainData;
+            var tp = terrain.transform.position;
+            var ts = td.size;
+
+            if (feature == "NearObject")
+            {
+                string targetId = args["targetObjectId"]?.Value<string>();
+                if (string.IsNullOrWhiteSpace(targetId)) return AgentToolResult.Fail("targetObjectId is required for NearObject.");
+                var target = EditorToolDispatcher.FindInScene(SceneManager.GetActiveScene(), targetId);
+                if (target == null) return AgentToolResult.Fail($"Object '{targetId}' not found.");
+
+                // Pick a spot slightly offset from the target
+                float offset = 5f;
+                Vector3 basePos = target.transform.position;
+                Vector3 newPos = basePos + new Vector3(offset, 0, offset);
+                float ty = terrain.SampleHeight(new Vector3(newPos.x, 0, newPos.z)) + tp.y;
+                return AgentToolResult.Ok($"Feature NearObject ('{targetId}'): Location found at X={newPos.x:F2}, Y={ty:F2}, Z={newPos.z:F2}");
+            }
+
+            // Scan the terrain for peaks/valleys/flat
+            int res = 64; // scan resolution
+            Vector3 bestPos = Vector3.zero;
+            float bestVal = feature == "LowestValley" ? float.MaxValue : float.MinValue;
+
+            for (int z = 0; z < res; z++)
+            {
+                for (int x = 0; x < res; x++)
+                {
+                    float nx = (float)x / (res - 1);
+                    float nz = (float)z / (res - 1);
+                    float worldX = tp.x + nx * ts.x;
+                    float worldZ = tp.z + nz * ts.z;
+                    float h = td.GetInterpolatedHeight(nx, nz) + tp.y;
+
+                    if (feature == "HighestPeak")
+                    {
+                        if (h > bestVal) { bestVal = h; bestPos = new Vector3(worldX, h, worldZ); }
+                    }
+                    else if (feature == "LowestValley")
+                    {
+                        if (h < bestVal) { bestVal = h; bestPos = new Vector3(worldX, h, worldZ); }
+                    }
+                    else if (feature == "LargestFlatArea")
+                    {
+                        // To find flat area, we look for lowest steepness
+                        float steepness = td.GetSteepness(nx, nz);
+                        // We want lowest steepness, so we invert it to maximize
+                        float flatScore = -steepness;
+                        if (flatScore > bestVal) { bestVal = flatScore; bestPos = new Vector3(worldX, h, worldZ); }
+                    }
+                }
+            }
+
+            if (bestPos == Vector3.zero && feature != "LargestFlatArea")
+                return AgentToolResult.Fail($"Could not find feature: {feature}");
+
+            return AgentToolResult.Ok($"Feature '{feature}': Location found at X={bestPos.x:F2}, Y={bestPos.y:F2}, Z={bestPos.z:F2}");
+        }
     }
 }

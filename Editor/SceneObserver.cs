@@ -164,5 +164,66 @@ namespace Antimatter
         {
             return JsonUtility.ToJson(snap, true);
         }
+
+        /// <summary>
+        /// Computes a human-readable diff between two scene snapshots.
+        /// </summary>
+        public static string ComputeDiff(SceneSnapshot before, SceneSnapshot after)
+        {
+            if (before == null || after == null) return "No scene data to diff.";
+
+            var beforeDict = before.objects.GroupBy(o => o.id).ToDictionary(g => g.Key, g => g.ToList());
+            var afterDict = after.objects.GroupBy(o => o.id).ToDictionary(g => g.Key, g => g.ToList());
+
+            var added = new List<string>();
+            var removed = new List<string>();
+            var changed = new List<string>();
+
+            foreach (var kvp in afterDict)
+            {
+                if (!beforeDict.ContainsKey(kvp.Key))
+                {
+                    added.Add($"{kvp.Value.Count}x {kvp.Key} [{kvp.Value[0].kind}]");
+                }
+                else
+                {
+                    var bList = beforeDict[kvp.Key];
+                    var aList = kvp.Value;
+                    
+                    if (aList.Count > bList.Count)
+                        added.Add($"{aList.Count - bList.Count}x {kvp.Key} [{aList[0].kind}]");
+                    else if (bList.Count > aList.Count)
+                        removed.Add($"{bList.Count - aList.Count}x {kvp.Key} [{bList[0].kind}]");
+                    else
+                    {
+                        var b = bList[0];
+                        var a = aList[0];
+                        if (Vector3.Distance(b.position, a.position) > 0.01f ||
+                            Vector3.Distance(b.rotation, a.rotation) > 0.01f ||
+                            Vector3.Distance(b.scale, a.scale) > 0.01f ||
+                            string.Join(",", b.components) != string.Join(",", a.components) ||
+                            b.parentId != a.parentId ||
+                            b.materialName != a.materialName)
+                        {
+                            changed.Add(kvp.Key);
+                        }
+                    }
+                }
+            }
+
+            foreach (var kvp in beforeDict)
+            {
+                if (!afterDict.ContainsKey(kvp.Key))
+                    removed.Add($"{kvp.Value.Count}x {kvp.Key} [{kvp.Value[0].kind}]");
+            }
+
+            var sb = new StringBuilder();
+            if (added.Count > 0) sb.AppendLine($"Added: {string.Join(", ", added)}");
+            if (removed.Count > 0) sb.AppendLine($"Removed: {string.Join(", ", removed)}");
+            if (changed.Count > 0) sb.AppendLine($"Changed: {string.Join(", ", changed)}");
+
+            if (sb.Length == 0) return "No detectable scene changes.";
+            return sb.ToString();
+        }
     }
 }

@@ -2,7 +2,8 @@
     "name": "Antimatter.Editor",
     "rootNamespace": "Antimatter",
     "references": [
-        "Antimatter.Runtime"
+        "Antimatter.Runtime",
+        "Newtonsoft.Json"
     ],
     "includePlatforms": [
         "Editor"

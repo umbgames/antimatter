@@ -26,7 +26,7 @@ namespace Antimatter
         [Range(0f, 10f)] public float turnPenalty = 1.2f;         // reduce zig-zags
     
         [Header("Road Geometry")]
-        [Range(1f, 20f)] public float roadHalfWidth = 3.5f;
+        [Range(1f, 20f)] public float roadHalfWidth = 2.25f;
         [Range(0f, 1f)] public float roadYOffset = 0.02f;
     
         [Header("Terrain Stamping")]

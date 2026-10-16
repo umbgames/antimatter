@@ -28,6 +28,7 @@ namespace Antimatter
     {
         // ── Static singleton for cross-system access ──
         public static AgentOrchestrator ActiveOrchestrator { get; private set; }
+        private static DateTime _lastRequestTime = DateTime.MinValue;
 
         // ── Events ──
         public event Action<AgentMessage> OnMessage;
@@ -41,6 +42,9 @@ namespace Antimatter
         public bool IsPaused { get; private set; }
         public int TotalPromptTokens { get; private set; }
         public int TotalCompletionTokens { get; private set; }
+        
+        public float TotalCreditsConsumed { get; private set; }
+        public float AvailableCreditBalance { get; private set; }
 
         // ── Internals ──
         private List<AgentMessage> _history = new List<AgentMessage>();
@@ -59,6 +63,41 @@ namespace Antimatter
 
         // External results injected by other systems (e.g. compiler errors)
         private Queue<(string toolName, string content)> _externalResults = new Queue<(string, string)>();
+
+        // ── Tool Result Cache: prevents redundant read-only tool calls ──
+        private Dictionary<string, string> _toolResultCache = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        // Tools whose results are safe to cache (read-only / idempotent)
+        private static readonly HashSet<string> CacheableTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "inspectScene", "listAssets", "searchAssets", "read_file", "read_large_file",
+            "search_files", "search_entire_project", "search_marketplace",
+            "analyze_script", "analyze_folder", "analyze_project_structure",
+            "analyze_prefab", "analyze_animator", "analyze_scriptable_objects",
+            "dependency_analysis", "full_project_scan",
+            "queryTerrainInfo", "sampleTerrain", "terrainHeightGrid", "getObjectInfo",
+            "listPrefabs", "listAudioClips", "raycast"
+        };
+
+        // Tools that mutate the scene and should invalidate scene-related caches
+        private static readonly HashSet<string> SceneMutatingTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "createObject", "deleteObject", "modifyTransform", "addComponent",
+            "setObjectActive", "attachScript", "generateTerrain",
+            "generateRoadNetwork", "generateSettlements", "generateWorld",
+            "createScene", "createParticleSystem", "generateCanvasUI", "proposePlan",
+            "cloneObject", "renameObject", "reparentObject", "setComponentProperty",
+            "setSceneEnvironment", "instantiatePrefab", "addAudioSource", "configureLighting",
+            "bakeNavMesh"
+        };
+
+        // Tools that mutate the filesystem and should invalidate file-related caches
+        private static readonly HashSet<string> FileMutatingTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "writeScript", "deleteScript", "writeShader", "createMaterial",
+            "create_file", "edit_file", "delete_file", "rename_file",
+            "createPrefab", "createAnimator", "createAnimationClip", "createProceduralSkybox"
+        };
 
         // ── Token Budget Constants ──
         // Rough char-to-token ratio: ~4 chars per token for English text
@@ -92,6 +131,7 @@ namespace Antimatter
         public void ClearHistory()
         {
             _history.Clear();
+            _toolResultCache.Clear();
             TotalPromptTokens = 0;
             TotalCompletionTokens = 0;
         }
@@ -475,7 +515,12 @@ namespace Antimatter
                 "createScene" or "runFullPlan" or "attachScript" or "generateTerrain" or
                 "setObjectActive" or "generateRoadNetwork" or "generateSettlements" or
                 "generateCity" or "generateWorld" or "arrangeCityScene" or "focusSceneView" or
-                "generateCanvasUI" or "createParticleSystem" or "enterPlayMode" or "exitPlayMode" => true,
+                "generateCanvasUI" or "createParticleSystem" or "enterPlayMode" or "exitPlayMode" or
+                "cloneObject" or "renameObject" or "reparentObject" or "getObjectInfo" or
+                "setComponentProperty" or "setSceneEnvironment" or
+                "bakeNavMesh" or "raycast" or "createPrefab" or "instantiatePrefab" or
+                "listPrefabs" or "createAnimator" or "createAnimationClip" or "addAudioSource" or
+                "listAudioClips" or "configureLighting" or "createProceduralSkybox" => true,
                 _ => false
             };
         }
@@ -488,6 +533,65 @@ namespace Antimatter
             int toolTokens = EstimateToolDefinitionTokens(tools);
             int budget = DefaultMaxRequestTokens - toolTokens - 200; // 200 token buffer for response overhead
             return Math.Max(budget, 1500); // Never go below 1500 tokens for messages
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  TOOL RESULT CACHE
+        // ══════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Builds a cache key for a tool call. Returns null if the tool is not cacheable.
+        /// Key = "toolName|sorted_args_json" so identical calls produce identical keys.
+        /// </summary>
+        private static string BuildToolCacheKey(string toolName, Newtonsoft.Json.Linq.JObject args)
+        {
+            if (!CacheableTools.Contains(toolName)) return null;
+
+            // For no-arg tools like inspectScene, listAssets
+            if (args == null || !args.HasValues)
+                return toolName;
+
+            // Sort properties for deterministic key
+            var sorted = new Newtonsoft.Json.Linq.JObject(
+                args.Properties().OrderBy(p => p.Name, StringComparer.Ordinal));
+            return $"{toolName}|{sorted.ToString(Newtonsoft.Json.Formatting.None)}";
+        }
+
+        /// <summary>
+        /// Invalidates cache entries when a mutating tool runs.
+        /// Scene-mutating tools clear scene caches; file-mutating tools clear file caches.
+        /// </summary>
+        private void InvalidateCacheForTool(string toolName)
+        {
+            if (SceneMutatingTools.Contains(toolName))
+            {
+                // Invalidate scene-related cached results
+                var keysToRemove = _toolResultCache.Keys
+                    .Where(k => k.StartsWith("inspectScene", StringComparison.OrdinalIgnoreCase) ||
+                                k.StartsWith("queryTerrainInfo", StringComparison.OrdinalIgnoreCase) ||
+                                k.StartsWith("sampleTerrain", StringComparison.OrdinalIgnoreCase) ||
+                                k.StartsWith("terrainHeightGrid", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                foreach (var key in keysToRemove)
+                    _toolResultCache.Remove(key);
+            }
+
+            if (FileMutatingTools.Contains(toolName))
+            {
+                // Invalidate file/project-related cached results
+                var keysToRemove = _toolResultCache.Keys
+                    .Where(k => k.StartsWith("listAssets", StringComparison.OrdinalIgnoreCase) ||
+                                k.StartsWith("read_file", StringComparison.OrdinalIgnoreCase) ||
+                                k.StartsWith("read_large_file", StringComparison.OrdinalIgnoreCase) ||
+                                k.StartsWith("search_files", StringComparison.OrdinalIgnoreCase) ||
+                                k.StartsWith("search_entire_project", StringComparison.OrdinalIgnoreCase) ||
+                                k.StartsWith("analyze_", StringComparison.OrdinalIgnoreCase) ||
+                                k.StartsWith("dependency_analysis", StringComparison.OrdinalIgnoreCase) ||
+                                k.StartsWith("full_project_scan", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                foreach (var key in keysToRemove)
+                    _toolResultCache.Remove(key);
+            }
         }
 
         // ══════════════════════════════════════════════════════════════════
@@ -524,6 +628,14 @@ namespace Antimatter
                         _history.Add(AgentMessage.System(existingWorkContext));
                     }
                 }
+                else
+                {
+                    // TIER 3: Auto Scene Context Injection
+                    // If it's a new request, inject the current scene context so the agent doesn't waste a turn calling inspectScene.
+                    var sceneSnap = SceneObserver.GetSnapshot();
+                    string sceneContext = SceneObserver.ToAgentContext(sceneSnap);
+                    _history.Add(AgentMessage.System($"[Auto-Injected Scene Context]\n{sceneContext}\n\nNote: You do not need to call inspectScene right now."));
+                }
 
                 // Add user message
                 var userMsg = AgentMessage.User(goal);
@@ -535,6 +647,7 @@ namespace Antimatter
                 var allTools = EditorToolDispatcher.GetAllTools();
                 IGamePlanClient client = AiProviderSettings.CreateClient();
                 int consecutiveTextReplies = 0; // Track text-only replies for auto-continue
+                int consecutiveEmptyReplies = 0; // Track empty replies to prevent infinite loops
                 string stopReason = null;
 
                 for (int step = 1; unlimited || step <= maxSteps; step++)
@@ -565,6 +678,21 @@ namespace Antimatter
                     int estimatedTotal = EstimateHistoryTokens(optimizedHistory) + EstimateToolDefinitionTokens(filteredTools);
                     Debug.Log($"[Agent] Step {step}: Sending ~{estimatedTotal} est. tokens " +
                               $"({optimizedHistory.Count} msgs, {filteredTools.Count}/{allTools.Count} tools)");
+
+                    // ── CLIENT-SIDE THROTTLING ──
+                    // Mistral strict RPS limits: devstral (0.83 RPS = ~1.2s). The loop mostly talks to devstral.
+                    if (AiProviderSettings.Provider == AiProvider.Alpha)
+                    {
+                        double requiredDelaySeconds = 1.5;
+                        var timeSinceLast = (DateTime.UtcNow - _lastRequestTime).TotalSeconds;
+                        if (timeSinceLast < requiredDelaySeconds)
+                        {
+                            int waitMs = (int)((requiredDelaySeconds - timeSinceLast) * 1000);
+                            Debug.Log($"[Agent] Pacing loop to respect Alpha RPS limits. Waiting {waitMs}ms before next request...");
+                            await Task.Delay(waitMs, _cts.Token);
+                        }
+                    }
+                    _lastRequestTime = DateTime.UtcNow;
 
                     // Call the LLM with optimized payload
                     AgentResponse response;
@@ -606,6 +734,9 @@ namespace Antimatter
                     // Track token usage
                     TotalPromptTokens += response.PromptTokens;
                     TotalCompletionTokens += response.CompletionTokens;
+                    TotalCreditsConsumed += response.CreditsConsumed;
+                    if (response.UnityCreditBalance > 0)
+                        AvailableCreditBalance = response.UnityCreditBalance;
                     OnTokenUsage?.Invoke(response.PromptTokens, response.CompletionTokens);
 
                     // If model replied with text only (no tool calls)
@@ -618,24 +749,37 @@ namespace Antimatter
                             OnMessage?.Invoke(assistantMsg);
 
                             // ── AUTO-CONTINUE: Check if the model is mid-task and just paused ──
-                            if (ShouldAutoContinue(response.TextContent) && consecutiveTextReplies < 2)
+                            if (ShouldAutoContinue(response.TextContent) && consecutiveTextReplies < 3)
                             {
                                 consecutiveTextReplies++;
                                 Debug.Log($"[Agent] Auto-continuing: model appears mid-task (attempt {consecutiveTextReplies})");
+                                var continueMsg = AgentMessage.User("Please continue your task and provide the next tool calls.");
+                                _history.Add(continueMsg);
+                                OnMessage?.Invoke(continueMsg);
                                 continue; // Don't break — let the loop send the history back
                             }
-                            if (consecutiveTextReplies >= 2)
-                                stopReason = "Model sent text-only replies 2 times in a row (auto-continue limit).";
+                            if (consecutiveTextReplies >= 3)
+                                stopReason = "Model sent text-only replies 3 times in a row (auto-continue limit).";
                             else
                                 stopReason = "Model replied with text and no tool calls (appears finished).";
                         }
                         else
                         {
-                            stopReason = "Model returned an empty response with no tool calls.";
+                            if (consecutiveEmptyReplies < 2)
+                            {
+                                consecutiveEmptyReplies++;
+                                Debug.LogWarning($"[Agent] Model returned an empty response (attempt {consecutiveEmptyReplies}). Prompting it to retry...");
+                                var retryMsg = AgentMessage.User("Your response was empty. Please provide a response or call a tool.");
+                                _history.Add(retryMsg);
+                                OnMessage?.Invoke(retryMsg);
+                                continue;
+                            }
+                            stopReason = "Model returned an empty response with no tool calls (auto-continue limit).";
                         }
                         break;
                     }
                     consecutiveTextReplies = 0; // Reset on tool calls
+                    consecutiveEmptyReplies = 0;
 
                     // Process tool calls
                     foreach (var call in response.ToolCalls)
@@ -663,26 +807,59 @@ namespace Antimatter
                             }
                         }
 
-                        // Execute the tool
-                        AgentToolResult result;
-                        try
-                        {
-                            result = EditorToolDispatcher.Dispatch(call.ToolName, call.Arguments);
+                        // ── TOOL RESULT CACHE: Return cached result for duplicate read-only calls ──
+                        string cacheKey = BuildToolCacheKey(call.ToolName, call.Arguments);
+                        string resultContent;
 
-                            // ── SESSION MEMORY: Track what was created ──
-                            TrackCreatedArtifact(call.ToolName, call.Arguments);
-                        }
-                        catch (Exception ex)
+                        if (cacheKey != null && _toolResultCache.TryGetValue(cacheKey, out string cachedResult))
                         {
-                            result = AgentToolResult.Fail($"Tool execution error: {ex.Message}");
+                            Debug.Log($"[Agent] Cache HIT for {call.ToolName} — returning cached result instead of re-executing.");
+                            resultContent = $"[CACHED — identical to previous call] {cachedResult}";
                         }
+                        else
+                        {
+                            bool isSceneMutating = SceneMutatingTools.Contains(call.ToolName);
+                            SceneObserver.SceneSnapshot snapBefore = null;
+                            if (isSceneMutating) snapBefore = SceneObserver.GetSnapshot();
 
-                        // ── TOKEN OPTIMIZATION: Compress tool result before storing ──
-                        string resultContent = result.ToString();
-                        if (resultContent.Length > MaxToolResultChars)
-                        {
-                            Debug.Log($"[Agent] Compressing tool result from {resultContent.Length} to ~{MaxToolResultChars} chars");
-                            resultContent = CompressToolResult(resultContent, MaxToolResultChars);
+                            // Execute the tool
+                            AgentToolResult result;
+                            try
+                            {
+                                result = EditorToolDispatcher.Dispatch(call.ToolName, call.Arguments);
+
+                                // ── SESSION MEMORY: Track what was created ──
+                                TrackCreatedArtifact(call.ToolName, call.Arguments);
+                            }
+                            catch (Exception ex)
+                            {
+                                result = AgentToolResult.Fail($"Tool execution error: {ex.Message}");
+                            }
+
+                            // ── TOKEN OPTIMIZATION: Compress tool result before storing ──
+                            resultContent = result.ToString();
+                            if (resultContent.Length > MaxToolResultChars)
+                            {
+                                Debug.Log($"[Agent] Compressing tool result from {resultContent.Length} to ~{MaxToolResultChars} chars");
+                                resultContent = CompressToolResult(resultContent, MaxToolResultChars);
+                            }
+
+                            // ── TIER 3: Post-tool-call scene diff injection ──
+                            if (isSceneMutating && result.Success)
+                            {
+                                var snapAfter = SceneObserver.GetSnapshot();
+                                string diff = SceneObserver.ComputeDiff(snapBefore, snapAfter);
+                                resultContent += $"\n\n[Auto-Injected Scene Diff]\n{diff}";
+                            }
+
+                            // Cache the result if this is a cacheable tool
+                            if (cacheKey != null)
+                            {
+                                _toolResultCache[cacheKey] = resultContent;
+                            }
+
+                            // Invalidate relevant caches if this is a mutating tool
+                            InvalidateCacheForTool(call.ToolName);
                         }
 
                         // Add tool result to history
@@ -706,9 +883,6 @@ namespace Antimatter
 
                 // ── LOG STOP REASON ──
                 Debug.Log($"[Agent] Stopped: {stopReason}");
-                var stopMsg = AgentMessage.AssistantText($"⚠️ Agent stopped — {stopReason}");
-                _history.Add(stopMsg);
-                OnMessage?.Invoke(stopMsg);
 
                 // Finalize: rename tracked scripts from .txt to .cs
                 FinalizeScripts();
@@ -915,13 +1089,9 @@ namespace Antimatter
                 _history.Add(resultMsg);
                 OnMessage?.Invoke(resultMsg);
 
-                // Execute the plan
-                if (editCurrentScene)
-                    GameGenerationExecutor.ExecuteEdit(planJson);
-                else if (levelGen)
-                    GameGenerationExecutor.ExecuteCreate(planJson);
-                else
-                    GameGenerationExecutor.ExecuteCreate(planJson);
+                // Execute the generation via the new pipeline
+                var orchestrator = new GenerationOrchestrator();
+                orchestrator.Execute(planJson);
 
                 var doneMsg = AgentMessage.AssistantText("Plan executed successfully.");
                 _history.Add(doneMsg);
@@ -1063,12 +1233,12 @@ namespace Antimatter
             if (editCurrentScene)
             {
                 sb.AppendLine("You are a Unity scene editor. Modify the CURRENT scene based on the user's request.");
-                sb.AppendLine("Return a valid JSON plan for GameGenerationExecutor.ExecuteEdit.");
+                sb.AppendLine("Return a valid JSON plan for the new generation pipeline.");
             }
             else
             {
                 sb.AppendLine("You are a Unity game generator. Create a complete game plan from scratch.");
-                sb.AppendLine("Return a valid JSON plan for GameGenerationExecutor.ExecuteCreate.");
+                sb.AppendLine("Return a valid JSON plan for the new generation pipeline.");
             }
 
             if (levelGen)
@@ -1086,10 +1256,30 @@ namespace Antimatter
             if (constraints.enableAutoArrange) sb.AppendLine("  Auto-arrange enabled (roads/settlements).");
 
             sb.AppendLine();
+            sb.AppendLine("AVAILABLE TOOLS:");
+            foreach (var tool in EditorToolDispatcher.GetAllTools())
+            {
+                sb.AppendLine($"- {tool.Name}: {tool.Description}");
+                sb.AppendLine($"  Schema: {tool.ParameterSchema}");
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("OUTPUT FORMAT:");
+            sb.AppendLine("You MUST return ONLY a raw JSON object matching the following structure. Do not include markdown formatting or commentary.");
+            sb.AppendLine("{");
+            sb.AppendLine("  \"tasks\": [");
+            sb.AppendLine("    {");
+            sb.AppendLine("      \"id\": \"unique_task_id\",");
+            sb.AppendLine("      \"tool\": \"toolName\",");
+            sb.AppendLine("      \"args\": { /* tool specific arguments matching the schema */ },");
+            sb.AppendLine("      \"description\": \"What this task does\"");
+            sb.AppendLine("    }");
+            sb.AppendLine("  ]");
+            sb.AppendLine("}");
+
+            sb.AppendLine();
             sb.AppendLine("USER REQUEST:");
             sb.AppendLine(goal);
-            sb.AppendLine();
-            sb.AppendLine("Return ONLY pure JSON. No markdown, no commentary.");
 
             return sb.ToString();
         }

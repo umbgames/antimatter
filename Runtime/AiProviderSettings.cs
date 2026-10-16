@@ -8,10 +8,9 @@ namespace Antimatter
 {
     public enum AiProvider
     {
-        OpenAI = 0,
-        Groq = 1,
-        CustomServer = 2,
-        Gemini = 3
+        Free = 0,
+        Premium = 1,
+        Alpha = 2
     }
 
     public static class AiProviderSettings
@@ -22,9 +21,9 @@ namespace Antimatter
             get
             {
 #if UNITY_EDITOR
-                return (AiProvider)EditorPrefs.GetInt(AiPrefsKeys.Provider, (int)AiProvider.OpenAI);
+                return (AiProvider)EditorPrefs.GetInt(AiPrefsKeys.Provider, (int)AiProvider.Free);
 #else
-                return AiProvider.OpenAI;
+                return AiProvider.Free;
 #endif
             }
             set
@@ -35,133 +34,7 @@ namespace Antimatter
             }
         }
 
-        // ── API Keys ──
-        public static string OpenAIKey
-        {
-            get
-            {
-#if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.OpenAIKey, "").Trim();
-#else
-                return "";
-#endif
-            }
-            set
-            {
-#if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.OpenAIKey, value?.Trim() ?? "");
-#endif
-            }
-        }
-
-        public static string GroqKey
-        {
-            get
-            {
-#if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.GroqKey, "").Trim();
-#else
-                return "";
-#endif
-            }
-            set
-            {
-#if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.GroqKey, value?.Trim() ?? "");
-#endif
-            }
-        }
-
-        public static string GeminiKey
-        {
-            get
-            {
-#if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.GeminiKey, "").Trim();
-#else
-                return "";
-#endif
-            }
-            set
-            {
-#if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.GeminiKey, value?.Trim() ?? "");
-#endif
-            }
-        }
-
-        public static string CustomUrl
-        {
-            get
-            {
-#if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.CustomUrl, "").Trim();
-#else
-                return "";
-#endif
-            }
-            set
-            {
-#if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.CustomUrl, value?.Trim() ?? "");
-#endif
-            }
-        }
-
-        // ── Model Names (user-configurable per provider) ──
-        public static string OpenAIModel
-        {
-            get
-            {
-#if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.OpenAIModel, AiPrefsKeys.DefaultOpenAIModel);
-#else
-                return AiPrefsKeys.DefaultOpenAIModel;
-#endif
-            }
-            set
-            {
-#if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.OpenAIModel, value ?? AiPrefsKeys.DefaultOpenAIModel);
-#endif
-            }
-        }
-
-        public static string GroqModel
-        {
-            get
-            {
-#if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.GroqModel, AiPrefsKeys.DefaultGroqModel);
-#else
-                return AiPrefsKeys.DefaultGroqModel;
-#endif
-            }
-            set
-            {
-#if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.GroqModel, value ?? AiPrefsKeys.DefaultGroqModel);
-#endif
-            }
-        }
-
-        public static string GeminiModel
-        {
-            get
-            {
-#if UNITY_EDITOR
-                return EditorPrefs.GetString(AiPrefsKeys.GeminiModel, AiPrefsKeys.DefaultGeminiModel);
-#else
-                return AiPrefsKeys.DefaultGeminiModel;
-#endif
-            }
-            set
-            {
-#if UNITY_EDITOR
-                EditorPrefs.SetString(AiPrefsKeys.GeminiModel, value ?? AiPrefsKeys.DefaultGeminiModel);
-#endif
-            }
-        }
+        // ── Model properties removed, hardcoded in CurrentModel ──
 
         // ── Shared Settings ──
         public static int HttpTimeoutSeconds
@@ -274,66 +147,12 @@ namespace Antimatter
             }
         }
 
-        // ── Convenience: get model for current provider ──
-        public static string CurrentModel
-        {
-            get
-            {
-                return Provider switch
-                {
-                    AiProvider.OpenAI => OpenAIModel,
-                    AiProvider.Groq => GroqModel,
-                    AiProvider.Gemini => GeminiModel,
-                    _ => ""
-                };
-            }
-        }
+        // ── Convenience: backend determines actual model from tier ──
 
-        // ── Convenience: get API key for current provider ──
-        public static string CurrentApiKey
-        {
-            get
-            {
-                return Provider switch
-                {
-                    AiProvider.OpenAI => OpenAIKey,
-                    AiProvider.Groq => GroqKey,
-                    AiProvider.Gemini => GeminiKey,
-                    _ => ""
-                };
-            }
-        }
-
-        // ── Helper: push key into environment for clients that read env vars ──
-        public static void PushCurrentKeyToEnvironment()
-        {
-            switch (Provider)
-            {
-                case AiProvider.OpenAI:
-                    System.Environment.SetEnvironmentVariable("OPENAI_API_KEY", OpenAIKey);
-                    break;
-                case AiProvider.Groq:
-                    System.Environment.SetEnvironmentVariable("GROQ_API_KEY", GroqKey);
-                    break;
-                case AiProvider.Gemini:
-                    System.Environment.SetEnvironmentVariable("GEMINI_API_KEY", GeminiKey);
-                    break;
-            }
-        }
-
-        // ── Factory: create the right client for current provider ──
+        // ── Factory: create the unified backend client ──
         public static IGamePlanClient CreateClient()
         {
-            PushCurrentKeyToEnvironment();
-
-            return Provider switch
-            {
-                AiProvider.OpenAI => new OpenAIPlanClient(),
-                AiProvider.Groq => new GroqPlanClient(),
-                AiProvider.Gemini => new GeminiPlanClient(),
-                AiProvider.CustomServer => new CustomModelPlanClient(CustomUrl),
-                _ => throw new System.Exception($"Unknown AI provider: {Provider}")
-            };
+            return new BackendPlanClient();
         }
     }
 }

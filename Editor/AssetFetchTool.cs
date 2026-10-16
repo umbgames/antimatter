@@ -47,5 +47,51 @@ namespace Antimatter
 
             return AgentToolResult.Ok($"Found {results.Count} assets matching '{keyword}':\n" + string.Join("\n", results));
         }
+
+        public static AgentToolResult ToolSearchMarketplace(JObject args)
+        {
+            string keyword = args["keyword"]?.Value<string>()?.ToLower() ?? "";
+            
+            if (string.IsNullOrEmpty(keyword))
+                return AgentToolResult.Fail("Keyword is required.");
+
+            string[] searchFolders = new string[] { 
+                "Assets/Antimatter unity/Assets/Marketplace", 
+                "Assets/Antimatter unity/Editor/Tools/Marketplace" 
+            };
+
+            var results = new List<string>();
+
+            foreach (var folder in searchFolders)
+            {
+                if (!Directory.Exists(folder)) continue;
+
+                string[] metadataFiles = Directory.GetFiles(folder, "metadata.json", SearchOption.AllDirectories);
+                foreach (var file in metadataFiles)
+                {
+                    try
+                    {
+                        string json = File.ReadAllText(file);
+                        var data = JObject.Parse(json);
+                        string title = data["title"]?.Value<string>() ?? "";
+                        string desc = data["description"]?.Value<string>() ?? "";
+                        string filename = data["filename"]?.Value<string>() ?? "";
+
+                        if (title.ToLower().Contains(keyword) || desc.ToLower().Contains(keyword))
+                        {
+                            string dir = Path.GetDirectoryName(file).Replace("\\", "/");
+                            string mainFilePath = string.IsNullOrEmpty(filename) ? dir : Path.Combine(dir, filename).Replace("\\", "/");
+                            results.Add($"- Title: {title}\n  Main File: {mainFilePath}\n  Description: {desc}");
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            if (results.Count == 0)
+                return AgentToolResult.Ok($"No downloaded marketplace assets found matching '{keyword}'.");
+
+            return AgentToolResult.Ok($"Found {results.Count} marketplace assets matching '{keyword}':\n\n" + string.Join("\n\n", results));
+        }
     }
 }

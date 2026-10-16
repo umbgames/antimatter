@@ -60,6 +60,10 @@ namespace Antimatter
         public int heightY;                 // max height in metres
         public int seed;
 
+        // Grid Size
+        public int gridSizeX;               // Number of tiles in X (e.g. 2 for a 2x2 grid)
+        public int gridSizeZ;               // Number of tiles in Z
+
         // Noise
         public int octaves;
         public float lacunarity;

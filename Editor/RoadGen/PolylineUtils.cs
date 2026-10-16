@@ -90,6 +90,46 @@ namespace Antimatter
     
             return cur;
         }
+
+        // Catmull-Rom Spline Smoothing
+        public static List<Vector3> CatmullRom(List<Vector3> points, int resolution)
+        {
+            if (points == null || points.Count < 3 || resolution <= 1) return points;
+
+            List<Vector3> smoothPath = new List<Vector3>();
+            
+            // Loop over segments
+            for (int i = 0; i < points.Count - 1; i++)
+            {
+                Vector3 p0 = i == 0 ? points[0] : points[i - 1];
+                Vector3 p1 = points[i];
+                Vector3 p2 = points[i + 1];
+                Vector3 p3 = i == points.Count - 2 ? points[points.Count - 1] : points[i + 2];
+
+                for (int j = 0; j < resolution; j++)
+                {
+                    float t = j / (float)resolution;
+                    smoothPath.Add(GetCatmullRomPosition(t, p0, p1, p2, p3));
+                }
+            }
+            // Add the final point
+            smoothPath.Add(points[points.Count - 1]);
+            
+            return smoothPath;
+        }
+
+        private static Vector3 GetCatmullRomPosition(float t, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
+        {
+            float t2 = t * t;
+            float t3 = t2 * t;
+
+            return 0.5f * (
+                (2.0f * p1) +
+                (-p0 + p2) * t +
+                (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+                (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3
+            );
+        }
     
         // Enforce max grade by clamping road profile toward terrain (and marking tunnel if needed externally).
         public static void ApplyGradeProfileToTerrain(

@@ -13,9 +13,13 @@ namespace Antimatter
             public float f;
             public int cameFrom;   // packed index
             public byte cameDir;   // direction index 0..7, 255 = none
-            public bool closed;
-            public bool opened;
+            public uint openedGen;
+            public uint closedGen;
         }
+
+        private static Node[] _nodes;
+        private static MinHeap _open;
+        private static uint _currentGen = 1;
     
         private static readonly Vector2Int[] Neigh8 =
         {
@@ -36,7 +40,9 @@ namespace Antimatter
             int dy = Mathf.Abs(a.y - b.y);
             int min = Mathf.Min(dx, dy);
             int max = Mathf.Max(dx, dy);
-            return (min * 1.41421356f) + (max - min);
+            // Inflate heuristic slightly (1.2x) for straighter, more realistic organic paths 
+            // and fewer zig-zags (Weighted A*)
+            return ((min * 1.41421356f) + (max - min)) * 1.2f;
         }
     
         private static int Pack(int x, int y, int N) => y * N + x;
@@ -61,31 +67,44 @@ namespace Antimatter
                 return false;
     
             int total = N * N;
-            Node[] nodes = new Node[total];
-    
+            if (_nodes == null || _nodes.Length < total)
+            {
+                _nodes = new Node[total];
+            }
+            if (_open == null)
+            {
+                _open = new MinHeap(total);
+            }
+            
+            _currentGen++;
+            if (_currentGen == 0)
+            {
+                _currentGen = 1; // handle overflow
+                Array.Clear(_nodes, 0, _nodes.Length);
+            }
+            
+            _open.Clear();
+
             int sIdx = Pack(start.x, start.y, N);
             int gIdx = Pack(goal.x, goal.y, N);
     
-            // simple binary heap priority queue
-            var open = new MinHeap(total);
+            _nodes[sIdx].g = 0f;
+            _nodes[sIdx].f = Heuristic(start, goal);
+            _nodes[sIdx].cameFrom = -1;
+            _nodes[sIdx].cameDir = 255;
+            _nodes[sIdx].openedGen = _currentGen;
+            _open.Push(sIdx, _nodes[sIdx].f);
     
-            nodes[sIdx].g = 0f;
-            nodes[sIdx].f = Heuristic(start, goal);
-            nodes[sIdx].cameFrom = -1;
-            nodes[sIdx].cameDir = 255;
-            nodes[sIdx].opened = true;
-            open.Push(sIdx, nodes[sIdx].f);
-    
-            while (open.Count > 0)
+            while (_open.Count > 0)
             {
-                int curIdx = open.PopMin();
-                ref Node cur = ref nodes[curIdx];
-                if (cur.closed) continue;
-                cur.closed = true;
+                int curIdx = _open.PopMin();
+                ref Node cur = ref _nodes[curIdx];
+                if (cur.closedGen == _currentGen) continue;
+                cur.closedGen = _currentGen;
     
                 if (curIdx == gIdx)
                 {
-                    path = Reconstruct(nodes, gIdx, N);
+                    path = Reconstruct(_nodes, gIdx, N, _currentGen);
                     return path != null && path.Count >= 2;
                 }
     
@@ -98,8 +117,8 @@ namespace Antimatter
                     if (!grid.InBounds(npos.x, npos.y)) continue;
     
                     int nIdx = Pack(npos.x, npos.y, N);
-                    ref Node nn = ref nodes[nIdx];
-                    if (nn.closed) continue;
+                    ref Node nn = ref _nodes[nIdx];
+                    if (nn.closedGen == _currentGen) continue;
     
                     bool blocked = grid.blockedSurface[npos.x, npos.y];
                     if (!allowTunnel && blocked) continue;
@@ -116,18 +135,18 @@ namespace Antimatter
                     // Turn penalty
                     float turnCost = 0f;
                     if (cur.cameDir != 255 && cur.cameDir != dir)
-                        turnCost = s.turnPenalty;
+                        turnCost = s.turnPenalty * 1.5f; // Increased turn penalty for fewer zig-zags
     
                     float ng = cur.g + (cellCost * stepDist) + turnCost;
     
-                    if (!nn.opened || ng < nn.g)
+                    if (nn.openedGen != _currentGen || ng < nn.g)
                     {
                         nn.g = ng;
                         nn.f = ng + Heuristic(npos, goal);
                         nn.cameFrom = curIdx;
                         nn.cameDir = dir;
-                        nn.opened = true;
-                        open.Push(nIdx, nn.f);
+                        nn.openedGen = _currentGen;
+                        _open.Push(nIdx, nn.f);
                     }
                 }
             }
@@ -135,7 +154,7 @@ namespace Antimatter
             return false;
         }
     
-        private static List<Vector2Int> Reconstruct(Node[] nodes, int goalIdx, int N)
+        private static List<Vector2Int> Reconstruct(Node[] nodes, int goalIdx, int N, uint currentGen)
         {
             var rev = new List<Vector2Int>(256);
             int cur = goalIdx;
@@ -163,6 +182,11 @@ namespace Antimatter
             {
                 items = new int[Mathf.Max(16, capacity)];
                 keys = new float[items.Length];
+                Count = 0;
+            }
+
+            public void Clear()
+            {
                 Count = 0;
             }
     

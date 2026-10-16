@@ -184,39 +184,40 @@ namespace Antimatter
 
         private static async Task<string> SendToWhisper(byte[] wavData)
         {
-            bool useGroq = AiProviderSettings.Provider == AiProvider.Groq;
-            string apiKey = useGroq ? AiProviderSettings.GroqKey : AiProviderSettings.OpenAIKey;
-
-            if (string.IsNullOrWhiteSpace(apiKey)) 
+            string token = MarketplaceSettings.CurrentToken;
+            if (string.IsNullOrWhiteSpace(token)) 
             {
-                Debug.LogError("[Antimatter Voice] API Key is missing.");
+                Debug.LogError("[Antimatter Voice] Not logged in. Cannot transcribe voice.");
                 return null;
             }
 
-            string endpoint = useGroq ? "https://api.groq.com/openai/v1/audio/transcriptions" : "https://api.openai.com/v1/audio/transcriptions";
-            string model = useGroq ? "whisper-large-v3" : "whisper-1";
+            string endpoint = "https://api.umbtechnologies.com/v1/unity/transcribe";
 
             using var client = new HttpClient();
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            using var content = new MultipartFormDataContent();
-            var audioContent = new ByteArrayContent(wavData);
-            audioContent.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
-            content.Add(audioContent, "file", "voice.wav");
-            content.Add(new StringContent(model), "model");
-            content.Add(new StringContent("en"), "language");
+            var base64Wav = Convert.ToBase64String(wavData);
+            var jsonBody = "{\"file\":\"" + base64Wav + "\"}";
+            using var content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
 
             var response = await client.PostAsync(endpoint, content);
             string responseText = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
-                Debug.LogError($"[Antimatter Voice] API Error ({response.StatusCode}): {responseText}");
+                Debug.LogError($"[Antimatter Voice] Backend Error ({response.StatusCode}): {responseText}");
                 return null;
             }
 
-            var json = Newtonsoft.Json.Linq.JToken.Parse(responseText);
-            return json["text"]?.ToString();
+            try
+            {
+                var json = Newtonsoft.Json.Linq.JToken.Parse(responseText);
+                return json["text"]?.ToString() ?? json["data"]?["text"]?.ToString() ?? responseText;
+            }
+            catch
+            {
+                return responseText;
+            }
         }
 
         private static byte[] EncodeAsWav(float[] samples, int channels, int frequency)

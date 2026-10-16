@@ -23,7 +23,7 @@ namespace Antimatter
     
         // Default material asset location
         private const string DefaultMatFolder = "Assets/Generated/Roads";
-        private const string DefaultMatPath = DefaultMatFolder + "/DefaultRoad.mat";
+        private const string DefaultMatPath = DefaultMatFolder + "/DefaultRoad_V2.mat";
         private static Material _defaultRoadMat;
     
         public static GameObject BuildOrUpdateRoad(
@@ -140,7 +140,8 @@ namespace Antimatter
                 verts[i * 2 + 0] = leftP;
                 verts[i * 2 + 1] = rightP;
     
-                float v = (totalLen <= 0.0001f) ? 0f : (lens[i] / totalLen);
+                // Tile texture every 10 meters along the road
+                float v = lens[i] / 10f;
                 uvs[i * 2 + 0] = new Vector2(0f, v);
                 uvs[i * 2 + 1] = new Vector2(1f, v);
             }
@@ -181,7 +182,7 @@ namespace Antimatter
             return go;
         }
     
-        private static Material GetOrCreateDefaultRoadMaterial()
+        public static Material GetOrCreateDefaultRoadMaterial()
         {
             if (_defaultRoadMat != null) return _defaultRoadMat;
     
@@ -192,38 +193,68 @@ namespace Antimatter
                 return _defaultRoadMat;
             }
     
-            // Ensure folders exist
             if (!AssetDatabase.IsValidFolder("Assets/Generated"))
                 AssetDatabase.CreateFolder("Assets", "Generated");
             if (!AssetDatabase.IsValidFolder(DefaultMatFolder))
                 AssetDatabase.CreateFolder("Assets/Generated", "Roads");
     
-            Shader shader =
-                Shader.Find("Universal Render Pipeline/Lit") ??
-                Shader.Find("Standard");
-    
-            if (shader == null)
-            {
-                Debug.LogWarning("No suitable shader found for DefaultRoad material.");
-                return null;
-            }
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            if (shader == null) return null;
     
             var mat = new Material(shader) { name = "DefaultRoad" };
     
-            // Tiny asphalt-ish texture (valid default)
-            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            // Generate realistic 512x512 asphalt texture with lines
+            int res = 512;
+            var tex = new Texture2D(res, res, TextureFormat.RGBA32, true);
             tex.name = "DefaultRoadTex";
             tex.wrapMode = TextureWrapMode.Repeat;
             tex.filterMode = FilterMode.Bilinear;
     
-            tex.SetPixel(0, 0, new Color(0.12f, 0.12f, 0.12f, 1f));
-            tex.SetPixel(1, 0, new Color(0.16f, 0.16f, 0.16f, 1f));
-            tex.SetPixel(0, 1, new Color(0.16f, 0.16f, 0.16f, 1f));
-            tex.SetPixel(1, 1, new Color(0.12f, 0.12f, 0.12f, 1f));
-            tex.Apply();
+            var cols = new Color[res * res];
+            for (int y = 0; y < res; y++)
+            {
+                for (int x = 0; x < res; x++)
+                {
+                    // Noise for asphalt
+                    float n = Mathf.PerlinNoise(x * 0.1f, y * 0.1f) * 0.15f;
+                    float baseVal = 0.12f + n;
+                    Color c = new Color(baseVal, baseVal, baseVal, 1f);
     
-            if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", tex);
-            if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", tex);
+                    float u = x / (float)res;
+                    
+                    // Edge lines (solid white)
+                    if ((u > 0.05f && u < 0.08f) || (u > 0.92f && u < 0.95f))
+                    {
+                        c = Color.Lerp(c, new Color(0.9f, 0.9f, 0.9f, 1f), 0.8f);
+                    }
+                    
+                    // Center dashed lines (yellow)
+                    if (u > 0.48f && u < 0.52f)
+                    {
+                        float v = y / (float)res;
+                        if (v % 0.5f < 0.25f) // Dashed pattern
+                        {
+                            c = Color.Lerp(c, new Color(0.9f, 0.8f, 0.1f, 1f), 0.85f);
+                        }
+                    }
+    
+                    cols[y * res + x] = c;
+                }
+            }
+            tex.SetPixels(cols);
+            tex.Apply();
+            
+            string texPath = DefaultMatFolder + "/DefaultRoadTex.png";
+            System.IO.File.WriteAllBytes(texPath, tex.EncodeToPNG());
+            AssetDatabase.ImportAsset(texPath);
+            var savedTex = AssetDatabase.LoadAssetAtPath<Texture2D>(texPath);
+    
+            if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", savedTex);
+            if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", savedTex);
+            
+            // Set some smoothness/metallic
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.1f);
+            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.1f);
     
             AssetDatabase.CreateAsset(mat, DefaultMatPath);
             AssetDatabase.SaveAssets();
@@ -231,6 +262,28 @@ namespace Antimatter
     
             _defaultRoadMat = AssetDatabase.LoadAssetAtPath<Material>(DefaultMatPath);
             return _defaultRoadMat != null ? _defaultRoadMat : mat;
+        }
+
+        public static Material GetOrCreateDefaultMarkingMaterial()
+        {
+            string markPath = DefaultMatFolder + "/DefaultRoadMarking.mat";
+            var loaded = AssetDatabase.LoadAssetAtPath<Material>(markPath);
+            if (loaded != null) return loaded;
+
+            if (!AssetDatabase.IsValidFolder("Assets/Generated"))
+                AssetDatabase.CreateFolder("Assets", "Generated");
+            if (!AssetDatabase.IsValidFolder(DefaultMatFolder))
+                AssetDatabase.CreateFolder("Assets/Generated", "Roads");
+
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            var mat = new Material(shader) { name = "DefaultRoadMarking" };
+            mat.color = new Color(0.9f, 0.9f, 0.9f, 1f);
+            
+            AssetDatabase.CreateAsset(mat, markPath);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            
+            return AssetDatabase.LoadAssetAtPath<Material>(markPath);
         }
     }
 }

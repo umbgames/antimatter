@@ -1,220 +1,166 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
-using System.Net.Http.Headers;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.IO.Compression;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using UnityEngine;
+using UnityEditor;
 
 namespace Antimatter
 {
+    [Serializable]
+    public class MarketplaceItem
+    {
+        public string id;
+        public string title;
+        public string description;
+        public string itemType;
+        public string objectKey;
+        public string filename;
+        public long sizeBytes;
+        public string authorName;
+        public string createdAt;
+    }
+
     public static class MarketplaceClient
     {
-        private static readonly HttpClient Http = new HttpClient();
+        private static readonly HttpClient _httpClient = new HttpClient();
+        // Pointing to the new REST API backend
+        private const string API_BASE_URL = "https://api.umbtechnologies.com/v1/marketplace";
 
-        public static async Task<List<ToolManifest>> FetchAvailableToolsAsync(CancellationToken ct)
+        public static async Task<List<MarketplaceItem>> FetchItemsAsync(string type = "all", CancellationToken ct = default)
         {
-            var projectId = MarketplaceSettings.FirebaseProjectId;
-            if (string.IsNullOrWhiteSpace(projectId))
-                throw new Exception("Firebase Project ID is empty.");
+            string url = $"{API_BASE_URL}/items";
+            if (type != "all") url += $"?type={type}";
 
-            var url = $"https://firestore.googleapis.com/v1/projects/{projectId}/databases/(default)/documents/tools";
-
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            
-            // If we have a token, we could attach it, but the rules are read: if true for tools wrapper.
-            // Still, good practice to pass if logged in.
-            if (!string.IsNullOrEmpty(MarketplaceSettings.CurrentToken))
+            try
             {
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", MarketplaceSettings.CurrentToken);
-            }
-
-            using var resp = await Http.SendAsync(req, ct);
-            string respText = await resp.Content.ReadAsStringAsync();
-
-            if (!resp.IsSuccessStatusCode)
-                throw new Exception($"Failed to fetch tools: HTTP {(int)resp.StatusCode} {respText}");
-
-            var root = JToken.Parse(respText);
-            var docs = root["documents"] as JArray;
-
-            var list = new List<ToolManifest>();
-
-            if (docs == null) return list; // No tools
-
-            foreach (var doc in docs)
-            {
-                list.Add(ParseFirestoreDocument(doc));
-            }
-
-            return list;
-        }
-
-        private static ToolManifest ParseFirestoreDocument(JToken doc)
-        {
-            var fields = doc["fields"];
-            if (fields == null) return new ToolManifest();
-
-            var manifest = new ToolManifest();
-            manifest.id = GetStringField(fields, "id");
-            manifest.name = GetStringField(fields, "name");
-            manifest.version = GetStringField(fields, "version");
-            manifest.author = GetStringField(fields, "author");
-            manifest.description = GetStringField(fields, "description");
-            manifest.ai_description = GetStringField(fields, "ai_description");
-            manifest.category = GetStringField(fields, "category");
-            manifest.entry_point = GetStringField(fields, "entry_point");
-
-            var depsToken = fields["dependencies"]?["arrayValue"]?["values"] as JArray;
-            if (depsToken != null)
-            {
-                manifest.dependencies = new List<string>();
-                foreach (var d in depsToken)
-                {
-                    string val = d["stringValue"]?.Value<string>();
-                    if (!string.IsNullOrEmpty(val)) manifest.dependencies.Add(val);
-                }
-            }
-            else
-            {
-                manifest.dependencies = new List<string>();
-            }
-
-            return manifest;
-        }
-
-        private static string GetStringField(JToken fields, string key)
-        {
-            return fields[key]?["stringValue"]?.Value<string>() ?? "";
-        }
-        
-        public static async Task<byte[]> DownloadToolPackageAsync(string toolId, string version, CancellationToken ct)
-        {
-            var bucket = MarketplaceSettings.FirebaseStorageBucket;
-            if (string.IsNullOrWhiteSpace(bucket))
-                throw new Exception("Firebase Storage Bucket is empty.");
-
-            // Path: /tools/{toolId}/{version}/package.bundle
-            string objectPath = $"tools%2F{toolId}%2F{version}%2Fpackage.bundle";
-            var url = $"https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{objectPath}?alt=media";
-
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            
-            if (!string.IsNullOrEmpty(MarketplaceSettings.CurrentToken))
-            {
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", MarketplaceSettings.CurrentToken);
-            }
-
-            using var resp = await Http.SendAsync(req, ct);
-            
-            if (!resp.IsSuccessStatusCode)
-            {
-                string respText = await resp.Content.ReadAsStringAsync();
-                throw new Exception($"Failed to download tool: HTTP {(int)resp.StatusCode} {respText}");
-            }
-
-            return await resp.Content.ReadAsByteArrayAsync();
-        }
-
-        public static async Task PublishToolAsync(ToolManifest manifest, CancellationToken ct)
-        {
-            var bucket = MarketplaceSettings.FirebaseStorageBucket;
-            var projectId = MarketplaceSettings.FirebaseProjectId;
-
-            if (string.IsNullOrWhiteSpace(bucket) || string.IsNullOrWhiteSpace(projectId))
-                throw new Exception("Firebase config is incomplete.");
+                await FirebaseApiClient.EnsureValidTokenAsync(ct);
+                string idToken = MarketplaceSettings.CurrentToken;
                 
-            if (string.IsNullOrEmpty(MarketplaceSettings.CurrentToken))
-                throw new Exception("You must be logged in to publish a tool.");
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+                if (!string.IsNullOrEmpty(idToken))
+                {
+                    request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", idToken);
+                }
+
+                var response = await _httpClient.SendAsync(request, ct);
+                response.EnsureSuccessStatusCode();
+                string json = await response.Content.ReadAsStringAsync();
                 
-            if (!System.IO.File.Exists(manifest.entry_point))
-                throw new Exception($"Entry point script not found: {manifest.entry_point}");
-
-            // 1. Zip the script into memory
-            byte[] packageData;
-            using (var ms = new System.IO.MemoryStream())
-            {
-                using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, true))
-                {
-                    var fileInfo = new System.IO.FileInfo(manifest.entry_point);
-                    var entry = archive.CreateEntry(fileInfo.Name);
-                    using (var entryStream = entry.Open())
-                    using (var fileStream = System.IO.File.OpenRead(manifest.entry_point))
-                    {
-                        fileStream.CopyTo(entryStream);
-                    }
-                    manifest.entry_point = fileInfo.Name; // Update entry_point to just the file name inside the zip
-                }
-                packageData = ms.ToArray();
+                var data = JObject.Parse(json);
+                var itemsArray = data["items"] as JArray ?? data["data"]?["items"] as JArray;
+                
+                if (itemsArray == null) return new List<MarketplaceItem>();
+                
+                return itemsArray.ToObject<List<MarketplaceItem>>();
             }
-
-            // 2. Upload to Storage
-            string objectPath = $"tools%2F{manifest.id}%2F{manifest.version}%2Fpackage.bundle";
-            string storageUrl = $"https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{objectPath}";
-
-            using var storageReq = new HttpRequestMessage(HttpMethod.Post, storageUrl);
-            storageReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", MarketplaceSettings.CurrentToken);
-            storageReq.Content = new ByteArrayContent(packageData);
-            storageReq.Content.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
-
-            using var storageResp = await Http.SendAsync(storageReq, ct);
-            if (!storageResp.IsSuccessStatusCode)
+            catch (Exception ex)
             {
-                string err = await storageResp.Content.ReadAsStringAsync();
-                throw new Exception($"Failed to upload tool package: HTTP {(int)storageResp.StatusCode} {err}");
+                Debug.LogError($"[Marketplace] Error fetching items: {ex.Message}");
+                return new List<MarketplaceItem>();
             }
+        }
 
-            // 3. Create document in Firestore
-            var docData = new JObject
+        public static async Task DownloadAndInstallAsync(MarketplaceItem item, Action<float> onProgress, CancellationToken ct = default)
+        {
+            try
             {
-                ["fields"] = new JObject
+                onProgress?.Invoke(0.1f);
+
+                await FirebaseApiClient.EnsureValidTokenAsync(ct);
+                string idToken = MarketplaceSettings.CurrentToken;
+                if (string.IsNullOrEmpty(idToken))
                 {
-                    ["id"] = new JObject { ["stringValue"] = manifest.id },
-                    ["name"] = new JObject { ["stringValue"] = manifest.name },
-                    ["version"] = new JObject { ["stringValue"] = manifest.version },
-                    ["author"] = new JObject { ["stringValue"] = manifest.author },
-                    ["description"] = new JObject { ["stringValue"] = manifest.description },
-                    ["ai_description"] = new JObject { ["stringValue"] = manifest.ai_description },
-                    ["entry_point"] = new JObject { ["stringValue"] = manifest.entry_point },
-                    ["category"] = new JObject { ["stringValue"] = manifest.category },
-                    ["dependencies"] = new JObject { ["arrayValue"] = new JObject { ["values"] = new JArray() } }
+                    Debug.LogError("[Marketplace] Not authenticated. Please login to Antimatter first.");
+                    return;
                 }
-            };
 
-            string firestoreUrl = $"https://firestore.googleapis.com/v1/projects/{projectId}/databases/(default)/documents/tools";
-            
-            // To update or create, we post to the tools collection (creates automatically)
-            // But if we want a specific document ID (e.g. manifest.id), we can construct it using documentId.
-            firestoreUrl += $"?documentId={manifest.id}";
+                // 1. Get Download URL
+                var requestBody = new StringContent(JsonConvert.SerializeObject(new { objectKey = item.objectKey }), Encoding.UTF8, "application/json");
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{API_BASE_URL}/download-url")
+                {
+                    Content = requestBody
+                };
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", idToken);
 
-            using var fireReq = new HttpRequestMessage(HttpMethod.Post, firestoreUrl);
-            fireReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", MarketplaceSettings.CurrentToken);
-            fireReq.Content = new StringContent(docData.ToString(), System.Text.Encoding.UTF8, "application/json");
+                var urlResponse = await _httpClient.SendAsync(request, ct);
+                urlResponse.EnsureSuccessStatusCode();
+                
+                string urlJson = await urlResponse.Content.ReadAsStringAsync();
+                var urlData = JObject.Parse(urlJson);
+                string downloadUrl = (string)urlData["downloadUrl"] ?? (string)urlData["data"]?["downloadUrl"];
 
-            using var fireResp = await Http.SendAsync(fireReq, ct);
-            if (!fireResp.IsSuccessStatusCode)
+                if (string.IsNullOrEmpty(downloadUrl))
+                {
+                    Debug.LogError("[Marketplace] Failed to get valid download URL.");
+                    return;
+                }
+
+                onProgress?.Invoke(0.4f);
+
+                // 2. Download the actual file from S3
+                var fileResponse = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+                fileResponse.EnsureSuccessStatusCode();
+
+                byte[] fileBytes = await fileResponse.Content.ReadAsByteArrayAsync();
+
+                onProgress?.Invoke(0.8f);
+
+                // 3. Save to appropriate folder
+                string destFolder = "Assets/Antimatter unity/Editor/Tools/Marketplace";
+                if (item.itemType == "model" || item.itemType == "texture")
+                {
+                    destFolder = "Assets/Antimatter unity/Assets/Marketplace";
+                }
+
+                // Add ItemType as a parent folder
+                string itemTypeStr = string.IsNullOrEmpty(item.itemType) ? "Misc" : char.ToUpper(item.itemType[0]) + item.itemType.Substring(1).ToLower();
+                destFolder = Path.Combine(destFolder, itemTypeStr).Replace("\\", "/");
+
+                // Create subfolder using the asset title
+                string safeTitle = string.Join("_", item.title.Split(Path.GetInvalidFileNameChars()));
+                destFolder = Path.Combine(destFolder, safeTitle).Replace("\\", "/");
+
+                if (!Directory.Exists(destFolder))
+                    Directory.CreateDirectory(destFolder);
+
+                string safeFilename = item.filename;
+                if (string.IsNullOrEmpty(safeFilename)) safeFilename = item.id + (item.itemType == "tool" ? ".cs" : ".unitypackage");
+
+                string destPath = Path.Combine(destFolder, safeFilename).Replace("\\", "/");
+                File.WriteAllBytes(destPath, fileBytes);
+
+                // Save metadata.json
+                string metadataPath = Path.Combine(destFolder, "metadata.json").Replace("\\", "/");
+                var metadataObj = new {
+                    title = item.title,
+                    description = item.description,
+                    itemType = item.itemType,
+                    authorName = item.authorName,
+                    filename = safeFilename
+                };
+                File.WriteAllText(metadataPath, JsonConvert.SerializeObject(metadataObj, Formatting.Indented));
+
+                Debug.Log($"[Marketplace] Successfully downloaded {item.title} to {destPath}");
+
+                onProgress?.Invoke(1.0f);
+
+                // If it's a unitypackage, import it automatically
+                if (destPath.EndsWith(".unitypackage", StringComparison.OrdinalIgnoreCase))
+                {
+                    AssetDatabase.ImportPackage(destPath, interactive: true);
+                }
+
+                AssetDatabase.Refresh();
+            }
+            catch (Exception ex)
             {
-                // If it already exists (409 conflict), try PATCH instead
-                if (fireResp.StatusCode == System.Net.HttpStatusCode.Conflict)
-                {
-                    string patchUrl = $"https://firestore.googleapis.com/v1/projects/{projectId}/databases/(default)/documents/tools/{manifest.id}";
-                    using var patchReq = new HttpRequestMessage(new HttpMethod("PATCH"), patchUrl);
-                    patchReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", MarketplaceSettings.CurrentToken);
-                    patchReq.Content = new StringContent(docData.ToString(), System.Text.Encoding.UTF8, "application/json");
-                    
-                    using var patchResp = await Http.SendAsync(patchReq, ct);
-                    if (!patchResp.IsSuccessStatusCode)
-                    {
-                        string err = await patchResp.Content.ReadAsStringAsync();
-                        throw new Exception($"Failed to patch document: HTTP {(int)patchResp.StatusCode} {err}");
-                    }
-                }
-                else
-                {
-                    string err = await fireResp.Content.ReadAsStringAsync();
-                    throw new Exception($"Failed to create document: HTTP {(int)fireResp.StatusCode} {err}");
-                }
+                Debug.LogError($"[Marketplace] Download failed: {ex.Message}");
             }
         }
     }

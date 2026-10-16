@@ -46,6 +46,9 @@ namespace Antimatter
         public System.Collections.Generic.List<AgentToolCall> ToolCalls; // non-null if agent wants to call tools
         public int PromptTokens;
         public int CompletionTokens;
+        
+        public float CreditsConsumed;
+        public float UnityCreditBalance;
 
         public bool HasToolCalls => ToolCalls != null && ToolCalls.Count > 0;
         public bool HasText => !string.IsNullOrEmpty(TextContent);

@@ -34,6 +34,7 @@ namespace Antimatter
         private int _maxSteps;
         private string _statusText = "Idle";
         private bool _autoScroll = true;
+        private float _currentInputHeight = 40f;
         
         // ── Context Memory ──
         private List<UnityEngine.Object> _contextAssets = new List<UnityEngine.Object>();
@@ -71,6 +72,7 @@ namespace Antimatter
     
         private void OnEnable()
         {
+            _stylesInitialized = false;
             _orchestrator = new AgentOrchestrator();
             _orchestrator.OnMessage += HandleMessage;
             _orchestrator.OnStepProgress += HandleStepProgress;
@@ -146,13 +148,41 @@ namespace Antimatter
             return result;
         }
 
+        private Texture2D MakeRoundedTex(int radius, Color col)
+        {
+            int size = radius * 2 + 2;
+            Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            tex.hideFlags = HideFlags.HideAndDontSave;
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    int cx = x < radius ? radius : (x > size - 1 - radius ? size - 1 - radius : x);
+                    int cy = y < radius ? radius : (y > size - 1 - radius ? size - 1 - radius : y);
+
+                    float dx = x - cx;
+                    float dy = y - cy;
+                    float dist = Mathf.Sqrt(dx * dx + dy * dy);
+
+                    float alpha = Mathf.Clamp01(radius - dist + 0.5f);
+                    Color c = col;
+                    c.a *= alpha;
+                    tex.SetPixel(x, y, c);
+                }
+            }
+            tex.Apply();
+            return tex;
+        }
+
         private void InitStyles()
         {
             if (_stylesInitialized) return;
             
-            _userBg = MakeTex(2, 2, new Color(0.18f, 0.18f, 0.18f, 1f));
-            _toolBg = MakeTex(2, 2, new Color(0.12f, 0.14f, 0.16f, 1f));
-            Texture2D inputBg = MakeTex(2, 2, new Color(0.12f, 0.12f, 0.12f, 1f));
+            _userBg = MakeRoundedTex(10, new Color(0.18f, 0.18f, 0.18f, 1f));
+            _toolBg = MakeRoundedTex(8, new Color(0.12f, 0.14f, 0.16f, 1f));
+            Texture2D inputBg = MakeRoundedTex(12, new Color(0.12f, 0.12f, 0.12f, 1f));
+            Texture2D assistantBg = MakeRoundedTex(10, new Color(0.15f, 0.15f, 0.15f, 0.8f));
 
             _userBubbleStyle = new GUIStyle()
             {
@@ -160,6 +190,7 @@ namespace Antimatter
                 wordWrap = true,
                 padding = new RectOffset(12, 12, 10, 10),
                 margin = new RectOffset(40, 8, 4, 4),
+                border = new RectOffset(10, 10, 10, 10),
                 fontSize = 12
             };
             _userBubbleStyle.normal.background = _userBg;
@@ -169,10 +200,13 @@ namespace Antimatter
             {
                 richText = true,
                 wordWrap = true,
-                padding = new RectOffset(4, 4, 10, 10),
+                padding = new RectOffset(12, 12, 10, 10),
                 margin = new RectOffset(8, 40, 4, 4),
+                border = new RectOffset(10, 10, 10, 10),
                 fontSize = 12
             };
+            _assistantBubbleStyle.normal.background = assistantBg;
+            _assistantBubbleStyle.normal.textColor = Color.white;
     
             _toolBubbleStyle = new GUIStyle()
             {
@@ -180,9 +214,11 @@ namespace Antimatter
                 wordWrap = true,
                 padding = new RectOffset(10, 10, 8, 8),
                 margin = new RectOffset(20, 20, 4, 4),
+                border = new RectOffset(8, 8, 8, 8),
                 fontSize = 11
             };
             _toolBubbleStyle.normal.background = _toolBg;
+            _toolBubbleStyle.normal.textColor = Color.white;
     
             _systemBubbleStyle = new GUIStyle(EditorStyles.miniLabel)
             {
@@ -196,7 +232,8 @@ namespace Antimatter
             {
                 wordWrap = true,
                 fontSize = 12,
-                padding = new RectOffset(10, 10, 10, 10)
+                padding = new RectOffset(12, 12, 12, 12),
+                border = new RectOffset(12, 12, 12, 12)
             };
             _inputStyle.normal.background = inputBg;
             _inputStyle.normal.textColor = Color.white;
@@ -223,6 +260,12 @@ namespace Antimatter
             // ── Header ──
             DrawHeader();
     
+            if (!FirebaseApiClient.IsLoggedIn)
+            {
+                DrawLoginScreen();
+                return;
+            }
+    
             // ── Settings Panel ──
             if (_showSettings)
             {
@@ -231,11 +274,12 @@ namespace Antimatter
             }
     
             // ── Fixed layout: input+status anchored to bottom, chat fills the rest ──
-            // Reserve fixed space at the bottom for input area (110px) + status bar (20px) + bottom padding (40px)
-            const float inputAreaHeight = 110f;
+            float inputAreaPadding = 55f; // padding + footer row
+            if (_orchestrator != null && _orchestrator.IsRunning) inputAreaPadding += 35f;
+            float dynamicInputAreaHeight = _currentInputHeight + inputAreaPadding;
             const float statusBarHeight = 20f;
             const float bottomPadding = 40f;
-            const float bottomReserved = inputAreaHeight + statusBarHeight + bottomPadding;
+            float bottomReserved = dynamicInputAreaHeight + statusBarHeight + bottomPadding;
     
             // Chat takes everything between header and bottom-anchored input
             DrawChatArea(bottomReserved);
@@ -264,17 +308,21 @@ namespace Antimatter
                 GUILayout.FlexibleSpace();
     
                 // Provider indicator
-                GUILayout.Label($"{AiProviderSettings.Provider} | {AiProviderSettings.CurrentModel}",
+                GUILayout.Label($"Tier: {AiProviderSettings.Provider}",
                     EditorStyles.miniLabel);
     
                 GUILayout.Space(8);
     
-                // Token counter
+                // Credit counter
                 if (_orchestrator != null)
                 {
-                    int total = _orchestrator.TotalPromptTokens + _orchestrator.TotalCompletionTokens;
-                    if (total > 0)
-                        GUILayout.Label($"Tokens: {total:N0}", EditorStyles.miniLabel);
+                    if (_orchestrator.TotalCreditsConsumed > 0)
+                    {
+                        string cText = $"Cost: {_orchestrator.TotalCreditsConsumed:F2} CRD";
+                        if (_orchestrator.AvailableCreditBalance > 0)
+                            cText += $" | Bal: {_orchestrator.AvailableCreditBalance:F2} CRD";
+                        GUILayout.Label(cText, EditorStyles.miniLabel);
+                    }
                 }
     
                 GUILayout.Space(8);
@@ -297,6 +345,17 @@ namespace Antimatter
                         _displayMessages.Clear();
                         AgentHistory.Clear();
                         _statusText = "Idle";
+                    }
+                }
+
+                if (FirebaseApiClient.IsLoggedIn)
+                {
+                    if (GUILayout.Button("Sign Out", EditorStyles.toolbarButton, GUILayout.Width(60)))
+                    {
+                        if (EditorUtility.DisplayDialog("Sign Out", "Are you sure you want to sign out?", "Yes", "No"))
+                        {
+                            FirebaseApiClient.Logout();
+                        }
                     }
                 }
             }
@@ -354,21 +413,6 @@ namespace Antimatter
     
             AiProviderSettings.Provider = (AiProvider)EditorGUILayout.EnumPopup("Provider", AiProviderSettings.Provider);
     
-            EditorGUILayout.Space(4);
-            AiProviderSettings.OpenAIKey = EditorGUILayout.PasswordField("OpenAI API Key", AiProviderSettings.OpenAIKey);
-            AiProviderSettings.OpenAIModel = EditorGUILayout.TextField("OpenAI Model", AiProviderSettings.OpenAIModel);
-    
-            EditorGUILayout.Space(4);
-            AiProviderSettings.GroqKey = EditorGUILayout.PasswordField("Groq API Key", AiProviderSettings.GroqKey);
-            AiProviderSettings.GroqModel = EditorGUILayout.TextField("Groq Model", AiProviderSettings.GroqModel);
-    
-            EditorGUILayout.Space(4);
-            AiProviderSettings.GeminiKey = EditorGUILayout.PasswordField("Gemini API Key", AiProviderSettings.GeminiKey);
-            AiProviderSettings.GeminiModel = EditorGUILayout.TextField("Gemini Model", AiProviderSettings.GeminiModel);
-    
-            EditorGUILayout.Space(4);
-            AiProviderSettings.CustomUrl = EditorGUILayout.TextField("Custom Server URL", AiProviderSettings.CustomUrl);
-    
             EditorGUILayout.Space(10);
             EditorGUILayout.LabelField("Agent Settings", EditorStyles.boldLabel);
     
@@ -411,52 +455,81 @@ namespace Antimatter
             // Show key status
             switch (AiProviderSettings.Provider)
             {
-                case AiProvider.OpenAI:
-                    if (string.IsNullOrWhiteSpace(AiProviderSettings.OpenAIKey))
-                        EditorGUILayout.HelpBox("OpenAI API key is empty.", MessageType.Error);
-                    else
-                        EditorGUILayout.HelpBox("OpenAI ready. Best tool-calling reliability.", MessageType.Info);
+                case AiProvider.Free:
+                    EditorGUILayout.HelpBox("Free tier ready. Powered by Antimatter.", MessageType.Info);
                     break;
-                case AiProvider.Groq:
-                    if (string.IsNullOrWhiteSpace(AiProviderSettings.GroqKey))
-                        EditorGUILayout.HelpBox("Groq API key is empty.", MessageType.Error);
-                    else
-                    {
-                        bool groqModelSupportsTools = AiProviderSettings.GroqModel.Contains("tool-use") ||
-                                                      AiProviderSettings.GroqModel.Contains("groq-70b") ||
-                                                      AiProviderSettings.GroqModel.Contains("groq-8b");
-                        if (groqModelSupportsTools)
-                            EditorGUILayout.HelpBox(
-                                "Groq ready. Model supports native tool calling.",
-                                MessageType.Info);
-                        else
-                            EditorGUILayout.HelpBox(
-                                "⚠ This Groq model may not support tool calling. Recommended models:\n" +
-                                "• llama3-groq-70b-8192-tool-use-preview\n" +
-                                "• llama3-groq-8b-8192-tool-use-preview\n" +
-                                "The agent will fall back to text-based tool calls automatically.",
-                                MessageType.Warning);
-                    }
+                case AiProvider.Premium:
+                    EditorGUILayout.HelpBox("Premium tier ready. Powered by Antimatter.", MessageType.Info);
                     break;
-                case AiProvider.Gemini:
-                    if (string.IsNullOrWhiteSpace(AiProviderSettings.GeminiKey))
-                        EditorGUILayout.HelpBox("Gemini API key is empty.", MessageType.Error);
-                    else
-                        EditorGUILayout.HelpBox("Gemini ready. Function calling supported.", MessageType.Info);
-                    break;
-                case AiProvider.CustomServer:
-                    if (string.IsNullOrWhiteSpace(AiProviderSettings.CustomUrl))
-                        EditorGUILayout.HelpBox("Custom server URL is empty.", MessageType.Error);
-                    else
-                        EditorGUILayout.HelpBox("Custom server. Must support OpenAI-compatible tool calling.", MessageType.Info);
+                case AiProvider.Alpha:
+                    EditorGUILayout.HelpBox("Alpha tier ready. Powered by Antimatter.", MessageType.Info);
                     break;
             }
     
+            EditorGUILayout.Space(10);
+
+            // Add Credits button linking to local or production top-up URL
+            if (GUILayout.Button("Add Unity Credits", GUILayout.Height(30)))
+            {
+                Application.OpenURL("http://antimatter.ng/#/unity-credits");
+            }
+
+            EditorGUILayout.Space(10);
+
+            var logoutStyle = new GUIStyle(GUI.skin.button) { normal = { textColor = new Color(1f, 0.4f, 0.4f) } };
+            if (GUILayout.Button("Sign Out", logoutStyle))
+            {
+                FirebaseApiClient.Logout();
+                _showSettings = false;
+            }
+
             EditorGUILayout.Space(10);
             if (GUILayout.Button("← Back to Chat"))
                 _showSettings = false;
     
             EditorGUILayout.EndScrollView();
+        }
+    
+        // ──────────────────── LOGIN SCREEN ────────────────────
+    
+        private void DrawLoginScreen()
+        {
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            
+            EditorGUILayout.BeginVertical(new GUIStyle(EditorStyles.helpBox) { padding = new RectOffset(20, 20, 20, 20) }, GUILayout.Width(300));
+            
+            var titleStyle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 18, alignment = TextAnchor.MiddleCenter };
+            GUILayout.Label("Welcome to Antimatter", titleStyle);
+            GUILayout.Space(10);
+            
+            var descStyle = new GUIStyle(EditorStyles.label) { wordWrap = true, alignment = TextAnchor.MiddleCenter };
+            GUILayout.Label("Please sign in to connect the agent to your project.", descStyle);
+            
+            GUILayout.Space(20);
+            
+            var btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 14, fontStyle = FontStyle.Bold, padding = new RectOffset(10, 10, 10, 10) };
+            if (GUILayout.Button("Sign in with Google", btnStyle, GUILayout.Height(40)))
+            {
+                HandleGoogleSignIn();
+            }
+            
+            EditorGUILayout.EndVertical();
+            
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
+            GUILayout.FlexibleSpace();
+        }
+
+        private async void HandleGoogleSignIn()
+        {
+            var (success, errorMsg) = await FirebaseApiClient.SignInWithGoogleBrowserAsync();
+            if (!success)
+            {
+                Debug.LogError($"Sign in failed: {errorMsg}");
+            }
+            Repaint();
         }
     
         // ──────────────────── CHAT AREA ────────────────────
@@ -517,6 +590,8 @@ namespace Antimatter
     
         private void DrawMessage(DisplayMessage msg)
         {
+            var messageStyle = new GUIStyle(EditorStyles.miniLabel) { wordWrap = true, richText = true, normal = { textColor = new Color(0.7f, 0.7f, 0.7f) } };
+
             switch (msg.Role)
             {
                 case AgentRole.User:
@@ -524,12 +599,7 @@ namespace Antimatter
                     GUILayout.FlexibleSpace();
                     EditorGUILayout.BeginVertical(_userBubbleStyle, GUILayout.MaxWidth(position.width * 0.75f));
                     
-                    var userHeaderStyle = new GUIStyle(EditorStyles.label) { richText = true, normal = { textColor = new Color(0.8f, 0.8f, 0.8f) } };
-                    var userTextStyle = new GUIStyle(EditorStyles.label) { wordWrap = true, richText = true, normal = { textColor = Color.white } };
-                    
-                    GUILayout.Label($"<b>You</b>  <color=#666>{msg.Timestamp:HH:mm}</color>", userHeaderStyle);
-                    GUILayout.Space(2);
-                    GUILayout.Label(msg.Content, userTextStyle);
+                    GUILayout.Label(msg.Content, messageStyle);
                     
                     EditorGUILayout.EndVertical();
                     EditorGUILayout.EndHorizontal();
@@ -571,17 +641,7 @@ namespace Antimatter
                     {
                         // Normal assistant message
                         EditorGUILayout.BeginVertical(_assistantBubbleStyle, GUILayout.MaxWidth(position.width * 0.85f));
-                        GUILayout.Label($"<b>Agent</b>  <color=#888>{msg.Timestamp:HH:mm}</color>",
-                            new GUIStyle(EditorStyles.label) { richText = true });
-                        GUILayout.Label(msg.Content, new GUIStyle(EditorStyles.label) { wordWrap = true, richText = true });
-    
-                        // Copy button
-                        EditorGUILayout.BeginHorizontal();
-                        GUILayout.FlexibleSpace();
-                        if (GUILayout.Button("Copy", EditorStyles.miniButton, GUILayout.Width(45)))
-                            GUIUtility.systemCopyBuffer = msg.Content;
-                        EditorGUILayout.EndHorizontal();
-    
+                        GUILayout.Label(msg.Content, messageStyle);
                         EditorGUILayout.EndVertical();
                     }
                     break;
@@ -623,7 +683,7 @@ namespace Antimatter
             bool isRunning = _orchestrator != null && _orchestrator.IsRunning;
 
             // The main input bar using the flat dark grey _inputStyle
-            EditorGUILayout.BeginHorizontal(_inputStyle);
+            EditorGUILayout.BeginVertical(_inputStyle);
 
             var borderlessTextArea = new GUIStyle(EditorStyles.textArea)
             {
@@ -631,20 +691,51 @@ namespace Antimatter
                 fontSize = 13,
                 padding = new RectOffset(8, 8, 10, 10)
             };
-            borderlessTextArea.normal.background = null;
-            borderlessTextArea.focused.background = null;
-            borderlessTextArea.hover.background = null;
-            borderlessTextArea.active.background = null;
+            borderlessTextArea.normal.background = _inputStyle.normal.background;
+            borderlessTextArea.focused.background = _inputStyle.normal.background;
+            borderlessTextArea.hover.background = _inputStyle.normal.background;
+            borderlessTextArea.active.background = _inputStyle.normal.background;
             borderlessTextArea.normal.textColor = Color.white;
             borderlessTextArea.focused.textColor = Color.white;
 
-            _inputText = EditorGUILayout.TextArea(_inputText, borderlessTextArea, GUILayout.Height(40f));
+            // Calculate auto-resizing height
+            float textWidth = position.width - 20f - 20f; // window padding - inputStyle padding
+            float contentHeight = borderlessTextArea.CalcHeight(new GUIContent(_inputText), textWidth);
+            _currentInputHeight = Mathf.Clamp(contentHeight, 80f, 140f); // 80px min height
+
+            // Shift+Enter / Enter handling
+            Event e = Event.current;
+            bool submit = false;
+            if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Return)
+            {
+                if (!e.shift && !isRunning && !string.IsNullOrWhiteSpace(_inputText))
+                {
+                    submit = true;
+                    e.Use();
+                }
+            }
+
+            _inputText = EditorGUILayout.TextArea(_inputText, borderlessTextArea, GUILayout.Height(_currentInputHeight));
+
+            if (submit)
+            {
+                SendMessage();
+            }
+
+            // Footer Row
+            EditorGUILayout.BeginHorizontal();
+            
+            var helperStyle = new GUIStyle(EditorStyles.miniLabel);
+            helperStyle.normal.textColor = new Color(0.5f, 0.5f, 0.5f);
+            GUILayout.Label("Ask anything... (Enter to send, Shift+Enter for newline)", helperStyle);
+            
+            GUILayout.FlexibleSpace();
 
             // Completely flat buttons without Unity's button borders
             var btnStyle = new GUIStyle(EditorStyles.label)
             {
-                fixedWidth = 32,
-                fixedHeight = 40,
+                fixedWidth = 28,
+                fixedHeight = 28,
                 alignment = TextAnchor.MiddleCenter
             };
 
@@ -672,16 +763,7 @@ namespace Antimatter
             }
 
             EditorGUILayout.EndHorizontal();
-
-            if (Event.current.type == EventType.KeyDown &&
-                Event.current.keyCode == KeyCode.Return &&
-                !Event.current.shift &&
-                !isRunning &&
-                !string.IsNullOrWhiteSpace(_inputText))
-            {
-                SendMessage();
-                Event.current.Use();
-            }
+            EditorGUILayout.EndVertical();
 
             if (isRunning)
             {

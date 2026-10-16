@@ -12,6 +12,124 @@ namespace Antimatter
         ///
         /// NOTE: yOffset is optional so old call sites still compile.
         /// </summary>
+        public static void StampPaths(
+            Terrain terrain,
+            List<List<Vector3>> paths,
+            float halfWidth,
+            float falloff,
+            float blend,
+            float cutDepthMeters,
+            float yOffset = 0f,
+            float sampleStepMeters = 2.5f)
+        {
+            if (terrain == null || terrain.terrainData == null || paths == null) return;
+            
+            var td = terrain.terrainData;
+            int res = td.heightmapResolution;
+            var heights = td.GetHeights(0, 0, res, res);
+            
+            Vector3 tPos = terrain.transform.position;
+            Vector3 tSize = td.size;
+            
+            halfWidth = Mathf.Max(0.01f, halfWidth);
+            cutDepthMeters = Mathf.Max(0f, cutDepthMeters);
+            falloff = Mathf.Max(0.01f, falloff);
+            blend = Mathf.Clamp01(blend);
+            float step = Mathf.Max(0.5f, sampleStepMeters);
+
+            float[,] maxW = new float[res, res];
+            float[,] targetH = new float[res, res];
+
+            foreach (var path in paths)
+            {
+                if (path == null || path.Count < 2) continue;
+                for (int i = 0; i < path.Count - 1; i++)
+                {
+                    Vector3 a = path[i];
+                    Vector3 b = path[i + 1];
+                    float segLen = Vector3.Distance(a, b);
+                    int steps = Mathf.Max(1, Mathf.CeilToInt(segLen / step));
+                    for (int s = 0; s <= steps; s++)
+                    {
+                        float t = s / (float)steps;
+                        Vector3 p = Vector3.Lerp(a, b, t);
+                        float targetWorldY = (p.y + yOffset) - cutDepthMeters;
+                        float targetN = (targetWorldY - tPos.y) / Mathf.Max(0.001f, tSize.y);
+                        targetN = Mathf.Clamp01(targetN);
+                        
+                        AccumulateCircle(maxW, targetH, res, p, tPos, tSize, halfWidth, falloff, targetN);
+                    }
+                }
+            }
+            
+            float realBlend = Mathf.Clamp01(blend);
+            for (int z = 0; z < res; z++)
+            {
+                for (int x = 0; x < res; x++)
+                {
+                    float w = maxW[z, x];
+                    if (w > 0f)
+                    {
+                        heights[z, x] = Mathf.Lerp(heights[z, x], targetH[z, x], w * realBlend);
+                    }
+                }
+            }
+            
+            td.SetHeights(0, 0, heights);
+            terrain.Flush();
+        }
+
+        private static void AccumulateCircle(
+            float[,] maxW,
+            float[,] targetH,
+            int res,
+            Vector3 center,
+            Vector3 tPos,
+            Vector3 tSize,
+            float radius,
+            float falloff,
+            float target)
+        {
+            float r = Mathf.Max(0.01f, radius);
+            float f = Mathf.Clamp(falloff, 0.01f, r);
+
+            int cx = WorldToHx(center.x, tPos.x, tSize.x, res);
+            int cz = WorldToHz(center.z, tPos.z, tSize.z, res);
+
+            int radHx = Mathf.CeilToInt((r / tSize.x) * (res - 1));
+            int radHz = Mathf.CeilToInt((r / tSize.z) * (res - 1));
+
+            int x0 = Mathf.Clamp(cx - radHx, 0, res - 1);
+            int x1 = Mathf.Clamp(cx + radHx, 0, res - 1);
+            int z0 = Mathf.Clamp(cz - radHz, 0, res - 1);
+            int z1 = Mathf.Clamp(cz + radHz, 0, res - 1);
+
+            Vector2 c2 = new Vector2(center.x, center.z);
+
+            for (int z = z0; z <= z1; z++)
+            {
+                float wz = Mathf.Lerp(tPos.z, tPos.z + tSize.z, z / (float)(res - 1));
+
+                for (int x = x0; x <= x1; x++)
+                {
+                    float wx = Mathf.Lerp(tPos.x, tPos.x + tSize.x, x / (float)(res - 1));
+
+                    float dist = Vector2.Distance(new Vector2(wx, wz), c2);
+                    if (dist > r) continue;
+
+                    float inner = Mathf.Max(0.0001f, r - f);
+                    float w = (dist <= inner) ? 1f : Mathf.InverseLerp(r, inner, dist);
+                    w = Mathf.Clamp01(w);
+
+                    if (w > maxW[z, x])
+                    {
+                        maxW[z, x] = w;
+                        targetH[z, x] = target;
+                    }
+                }
+            }
+        }
+
         public static void StampPath(
             Terrain terrain,
             List<Vector3> path,
@@ -74,6 +192,40 @@ namespace Antimatter
             terrain.Flush();
         }
     
+        public struct StampPadRequest
+        {
+            public Vector3 center;
+            public float radius;
+            public float falloff;
+            public float blend;
+        }
+
+        public static void StampPadsToTerrain(
+            Terrain terrain,
+            List<StampPadRequest> pads)
+        {
+            if (terrain == null || terrain.terrainData == null || pads == null) return;
+            
+            var td = terrain.terrainData;
+            int res = td.heightmapResolution;
+            var heights = td.GetHeights(0, 0, res, res);
+            
+            Vector3 tPos = terrain.transform.position;
+            Vector3 tSize = td.size;
+
+            foreach (var pad in pads)
+            {
+                float groundY = terrain.SampleHeight(pad.center) + tPos.y;
+                float targetN = (groundY - tPos.y) / Mathf.Max(0.001f, tSize.y);
+                targetN = Mathf.Clamp01(targetN);
+                
+                PaintCircle(heights, res, pad.center, tPos, tSize, pad.radius, pad.falloff, targetN, pad.blend);
+            }
+            
+            td.SetHeights(0, 0, heights);
+            terrain.Flush();
+        }
+
         /// <summary>
         /// Old signature.
         /// Stamps a pad to the CURRENT terrain height at center (flatten-ish).
